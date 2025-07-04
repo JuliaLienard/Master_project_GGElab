@@ -1,0 +1,1934 @@
+---
+title: "TUSCO - GLM for ISM"
+author: "Julia Lienard"
+format: pdf
+date: 2025-06-10
+date-modified: last-modified
+editor: visual
+---
+
+# Import libraries
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+```
+
+# Import data
+
+## - TUSCO genes
+
+```{r}
+# loading the list of BUGSI genes
+TUSCO_strict <- read_csv("../../../00_raw_data/TUSCO/bugsi_genes_list.txt", 
+                             col_names = FALSE)
+
+# imported TUSCO list transformed into a list in R:
+library(dplyr)
+TUSCO_strict <- TUSCO_strict %>% 
+  select(X1) %>% 
+  rename(Gene = X1)
+
+print(paste0(nrow(TUSCO_strict), " TUSCO strict genes loaded"))
+
+# import pancreas specific TUSCO genes
+library(readr)
+TUSCO_pancreas <- read_delim("../../../00_raw_data/TUSCO/tusco_human_pancreas.tsv", 
+    delim = "\t", 
+    escape_double = FALSE, 
+    col_names = FALSE, 
+    trim_ws = TRUE, skip = 3)
+
+TUSCO_pancreas <- TUSCO_pancreas %>% 
+  select(X3) %>% 
+  rename(Gene = X3)
+
+TUSCO_strict_pancreas <- 
+  rbind(TUSCO_strict, TUSCO_pancreas) # 147 genes
+
+TUSCO_strict_list <- TUSCO_strict %>% pull(Gene)
+
+# check how many pancreatic TUSCO genes are in all tissue BUSCO genes
+TUSCO_duplicate <- TUSCO_pancreas %>% 
+  filter(Gene %in% TUSCO_strict_list) 
+# 50 pancreatic genes are identical to the TUSCO strict list, 
+# so we expect in total to have 45 + 52 genes = 97
+
+BUSCO_pancreasTUSCO_list <- TUSCO_strict_pancreas %>% 
+  distinct(Gene) %>% 
+  pull(Gene) # 97 genes
+```
+
+## - SqQC formatted data
+
+```{r}
+Data_ISM_predictors <- read_csv("../../../analysis/03_ISMperc_prediction/02b_TUSCOpancreas_ISM_Dataprep/Data_format_ISM_model.csv")
+```
+
+# Visualize ISM(%) for TUSCO genes
+
+```{r}
+Data_ISM_predictors_TUSCO <- Data_ISM_predictors %>%
+  filter(Gene_name %in% BUSCO_pancreasTUSCO_list)
+```
+
+```{r}
+# plot the distribution of percentage ISM for each gene for all bugsi genes
+TUSCO_ISM_plot <- ggplot(Data_ISM_predictors_TUSCO) +
+  geom_density(mapping = aes(x=ISM_perc, color = sample)) 
+
+TUSCO_ISM_plot
+```
+
+It looks pretty similar between the samples, the majority of the genes have no or low ISM, but some genes can have high proportion of ISM.
+
+# **1. Data Exploration & Visualization**
+
+The different potential predictors are plotted to help subsetting the TUSCO dataset in order to improve better linearity between ISM and the predictor(s).
+
+## 1. Potential predictors
+
+-   Nb of exons:
+
+    -   Max number based on the genome annotation file (count exons by transcript_id for each gene and take the highest number)
+
+    -   Max number based on the SqantiQC output (take highest number of exons found for each gene)
+
+    -   Average number based on the SqantiQC output, weighted by FL counts
+
+-   Transcript length
+
+    -   average length between transcripts based on the SqantiQC output
+
+    -   average length between transcripts based on the SqantiQC output, weighted by FL counts
+
+-   GC(%) of the transcripts, weighted by FL counts
+
+-   Introns
+
+    -   total introns length (non spliced transcript length from gtf - average spliced length SqQC)
+
+    -   total introns length, weighted by FL counts
+
+    -   average intron length \[total introns length / (Average number of exons -1) \]
+
+## 2. Plot distribution of predictors in TUSCO data
+
+171 data points used here (both Kinnex samples)
+
+```{r}
+ggplot() +
+  geom_density(data = Data_ISM_predictors_TUSCO, aes(x = weighted_AvRefLength), 
+               color = "red", fill = "red", alpha = 0.3) +
+  geom_density(data = Data_ISM_predictors_TUSCO, aes(x = av_ref_length), 
+               color = "blue", fill = "blue", alpha = 0.3) +
+  labs(title = "Average Transcript Length for TUSCO Selected Genes",
+       y = "Density",
+       x = "Average Transcript Length (weighted or not by FL counts)",
+       subtitle = "not weighted by FL counts (red), weighted (blue)") +
+  theme_minimal()
+
+```
+
+Not difference if the average Transcript Length is weighted or not by FL counts. I keep the one weighted. We see that most data points are below 9000 nucleotides.
+
+```{r}
+# plot distribution of Exons for TUSCO list
+ggplot(Data_ISM_predictors_TUSCO) +
+  geom_density(aes(x = max_exon), 
+               color = "red", fill = "red", alpha = 0.3) +
+  geom_density(aes(x = MaxExonClass), 
+               color = "blue", fill = "blue", alpha = 0.3) +
+  geom_density(aes(x = weighted_AvExon), 
+               color = "green", fill = "green", alpha = 0.3) +
+  labs(title = "Number of exons for TUSCO Selected Genes",
+       y = "Density",
+       x = "Exons number",
+       subtitle = "Max number GTF (red), Max number SqQC (blue)\nAv number SqQC, weighted by FL counts (green)") 
+```
+
+The Average number of exons weighted by FL counts seems to be the most interesting one as it reflects what the samples really have.
+
+```{r}
+# plot distribution of GC(%) for TUSCO list
+ggplot(Data_ISM_predictors_TUSCO) +
+  geom_density(aes(x = weighted_AvGC), 
+               color = "violet", fill = "pink", alpha = 0.3) +
+  labs(title = "GC(%) of transcripts for TUSCO Selected Genes",
+       y = "Density",
+       x = "GC(%)",
+       subtitle = "weighted by FL counts (green)") 
+```
+
+```{r}
+# plot distribution of TOTAL introns length for TUSCO list
+ggplot(filter(Data_ISM_predictors_TUSCO, weighted_AvExon >= 2)) +
+  geom_density(aes(x = Tot_intron), 
+               color = "turquoise", fill = "turquoise", alpha = 0.3) +
+  geom_density(aes(x = Weighted_tot_intron), 
+               color = "blue", fill = "blue", alpha = 0.3) +
+  labs(title = "Intron size for TUSCO Selected Genes",
+       y = "Density",
+       x = "Total introns length",
+       subtitle = "Total length (turquoise), total length weighted by FL counts (blue)") 
+```
+
+```{r}
+# plot distribution of average introns length for TUSCO list
+ggplot(filter(Data_ISM_predictors_TUSCO, weighted_AvExon >= 2)) +
+  geom_density(aes(x = Av_intron_length), 
+               color = "darkgreen", fill = "darkgreen", alpha = 0.3) +
+  labs(title = "Intron size for TUSCO Selected Genes",
+       y = "Density",
+       x = "Average intron length",
+       subtitle = "Av intron length, weighted by FL counts (darkgreen)")
+
+
+```
+
+## **3. Plot each predictor vs. ISM proportion (ISM / FL_tot)**
+
+-   **General Trend to inspect:** Does the ISM proportion tend to increase or decrease as the predictor increases? Even a non-linear (S-shaped or curved) trend is informative for GLMs
+
+-   **Pattern or Structure:** Are there clear groupings, thresholds, or regions where the relationship changes? For example, does ISM proportion behave differently for very long transcripts or for transcripts with very few exons?
+
+-   **Spread and Variability:** Is the relationship tight (points clustered) or noisy (points widely spread)? This helps you judge how much the predictor explains about ISM.
+
+-   **Potential Outliers:** Are there points that do not follow the general pattern? Outliers can influence model fit and may suggest data issues or special cases
+
+-   **Data Gaps or Clusters:** Are there ranges of the predictor with little or no data, or with many overlapping points? This can affect model reliability and suggest where filtering might be needed.
+
+### - Subset TUSCO data set
+
+```{r}
+Data_ISM_predictors_TUSCO_posISM <- Data_ISM_predictors_TUSCO %>% 
+  filter(ISM_perc > 0) # n = 82
+
+Data_ISM_predictors_TUSCO_posISM_TL9000 <- 
+  Data_ISM_predictors_TUSCO_posISM %>% 
+  filter(weighted_AvRefLength < 9000) # n = 80
+
+Data_ISM_predictors_TUSCO_posISM_TL9000_Ex2 <- 
+  Data_ISM_predictors_TUSCO_posISM_TL9000 %>%
+  filter(weighted_AvExon >= 2) # n = 26
+```
+
+### - Transcript length
+
+" Multiple studies, such as Presnyak et al. (2015) and others, have shown that longer transcripts tend to have higher degradation rates or are more susceptible to degradation, often in combination with other features like GC content, codon usage, and ribosome density (<https://pmc.ncbi.nlm.nih.gov/articles/PMC5100846/>,
+
+```{r}
+library(patchwork)
+```
+
+```{r}
+# TRANSCRIPT LENGTH
+PLOT_trans_TUSCO <- 
+  ggplot(Data_ISM_predictors_TUSCO,
+         aes(x=weighted_AvRefLength, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)", x = "weighted Average ref transcript length (SqQC)",
+       subtitle = "Transcript Length") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+PLOT_trans_TUSCO_posISM <- 
+  ggplot(Data_ISM_predictors_TUSCO_posISM,
+         aes(x=weighted_AvRefLength, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", 
+       x = "Average ref transcript length (SqQC)\n(weighted by FL counts)",
+       subtitle = "Transcript Length") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+PLOT_trans9000_TUSCO_posISM <- 
+  ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000,
+         aes(x=weighted_AvRefLength, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", 
+       x = "Average ref transcript length (SqQC) \n(weighted by FL counts)",
+       subtitle = "Transcript Length < 9000") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10), 
+        panel.border = element_rect(colour = "red", 
+                                    fill=NA))
+
+PLOT_trans9000_TUSCO_posISM_Ex2 <- 
+  ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000_Ex2,
+         aes(x=weighted_AvRefLength, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", 
+       x = "Average ref transcript length \n (weighted by FL counts)",
+       subtitle = "Transcript Length <9000\nMin 2 exons") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+
+(PLOT_trans_TUSCO + PLOT_trans_TUSCO_posISM) / (PLOT_trans9000_TUSCO_posISM + PLOT_trans9000_TUSCO_posISM_Ex2)
+```
+
+### - Exon number
+
+```{r}
+PLOT_Exon_TUSCO <- 
+  ggplot(Data_ISM_predictors_TUSCO,
+         aes(x=weighted_AvExon, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)", 
+       x = "weighted Average exons number (SqQC)",
+       subtitle = "Av. Number of exons") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+PLOT_Exon_TUSCO_posISM <- 
+  ggplot(Data_ISM_predictors_TUSCO_posISM,
+         aes(x=weighted_AvExon, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", 
+       x = "weighted Average exons number (SqQC)",
+       subtitle = "Av. Number of exons") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+PLOT_Exon_trans9000_TUSCO_posISM <- 
+  ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000,
+         aes(x=weighted_AvExon, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", 
+       x = "weighted Average exons number (SqQC)",
+       subtitle = "Av. Number of exons\nTranscript Length < 9000") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+PLOT_Exon_trans9000_TUSCO_posISM_Ex2 <- 
+  ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000_Ex2,
+         aes(x=weighted_AvExon, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", 
+       x = "weighted Average exons number (SqQC)",
+       subtitle = "Av. Number of exons\nTranscript Length <9000\nMin 2 exons") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10), 
+        panel.border = element_rect(colour = "red", fill=NA))
+
+
+
+(PLOT_Exon_TUSCO + PLOT_Exon_TUSCO_posISM) / (PLOT_Exon_trans9000_TUSCO_posISM + PLOT_Exon_trans9000_TUSCO_posISM_Ex2)
+```
+
+The linearity is not completely met for the nb of exons and a transformation of this predictor can help, using logarithm, square root, and inverse.
+
+```{r}
+ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000,
+       aes(x=1/log(weighted_AvExon), 
+           y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", 
+       x = "1/log(weighted Average exons number)",
+       subtitle = "Av. Number of exons") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+```
+
+It suggests here that if using the predictor of number of exons, we should subset the TUSCO data by removing genes with less than 2 exons.
+
+### - GC(%)
+
+```{r}
+PLOT_GC_TUSCO <- 
+  ggplot(Data_ISM_predictors_TUSCO,
+         aes(x=weighted_AvGC, 
+             y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)", x = "weighted GC(%)",
+       subtitle = "GC(%)") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+PLOT_GC_TUSCO_posISM <- 
+  ggplot(Data_ISM_predictors_TUSCO_posISM,
+         aes(x=weighted_AvGC, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", x = "weighted GC(%)",
+       subtitle = "GC(%)") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10), 
+        panel.border = element_rect(colour = "red", 
+                                    fill=NA))
+
+PLOT_GC_trans9000_TUSCO_posISM <- 
+  ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000,
+         aes(x=weighted_AvGC, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", x = "weighted GC(%)",
+       subtitle = "GC(%)\nTranscript Length < 9000") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10), 
+        panel.border = element_rect(colour = "red", 
+                                    fill=NA))
+
+PLOT_GC_trans9000_TUSCO_posISM_Ex2 <- 
+  ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000_Ex2,
+         aes(x=weighted_AvGC, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", x = "weighted GC(%)",
+       subtitle = "GC(%)\nTranscript Length <9000\nMin 2 exons") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10), 
+        panel.border = element_rect(colour = "red", 
+                                    fill=NA))
+
+
+
+(PLOT_GC_TUSCO + PLOT_GC_TUSCO_posISM) / (PLOT_GC_trans9000_TUSCO_posISM + PLOT_GC_trans9000_TUSCO_posISM_Ex2)
+```
+
+GC(%) can be used with all TUSCO data sets.
+
+### - Intron length
+
+```{r}
+PLOT_intron_TUSCO <- 
+  ggplot(Data_ISM_predictors_TUSCO,
+         aes(x=Av_intron_length, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)", x = "weighted Av intron length",
+       subtitle = "weighted Av intron length") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+PLOT_intron_TUSCO_posISM <- 
+  ggplot(Data_ISM_predictors_TUSCO_posISM,
+         aes(x=Av_intron_length, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", x = "weighted Av intron length",
+       subtitle = "weighted Av intron length") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+PLOT_intron_trans9000_TUSCO_posISM <- 
+  ggplot(filter(Data_ISM_predictors_TUSCO_posISM_TL9000,
+                Av_intron_length < 15000),
+         aes(x=Av_intron_length, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", 
+       x = "weighted Av intron length",
+       subtitle = "weighted Av intron length\n < 15000nu\nTranscript Length < 9000") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+PLOT_intron_trans9000_TUSCO_posISM_Ex2 <- 
+  ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000_Ex2,
+         aes(x=Av_intron_length, y=ISM_perc)) +
+  geom_point(size = 0.5)+
+  geom_smooth(method = "lm") +
+  theme_gray(base_size = 14) +
+  labs(y = "ISM(%)\n(ISM>0)", 
+       x = "weighted Av intron length",
+       subtitle = "weighted Av intron length\nTranscript Length <9000\nMin 2 exons") +
+  theme(axis.title = element_text(size = 10), 
+        axis.text = element_text(size = 10))
+
+(PLOT_intron_TUSCO + PLOT_intron_TUSCO_posISM) / (PLOT_intron_trans9000_TUSCO_posISM + PLOT_intron_trans9000_TUSCO_posISM_Ex2)
+```
+
+The use of intron length does not seem to be possible.
+
+### - Summary plotting
+
+| Predictor | ISM \> 0 | ISM \> 0, transcript \> 9000 nu | ISM \> 0, transcript \> 9000 nu, min 2 exons |
+|------------------|------------------|------------------|------------------|
+| Transcript length | ✅ | ✅ | ✅ |
+| Nb exons |  | ✅ if log and inverse transformed | ✅ |
+| GC(%) | ✅ | ✅ | ✅ |
+| av. intron length |  |  |  |
+| DATA POINTS | 82 | 80 | 26 |
+
+It means here that predictors could be combined to improve the model if needed.
+
+# **2. GLM building (**subset1: ISM \> 0, transcript \> 9000 nu)
+
+GLM model is better than the linear since ISM is expressed in percentages and thus, the model will bound the ISM values between 0 an 100, compared to linear models than calculates any value. It is particularly suitted when proportions are based on counts, which is the case here as FL counts were used to calculate ISM_perc.
+
+binomial is used here as we have either ISM counts or no ISM counts, used for **Proportion data**.
+
+`"logit"` is the most common link for binomial GLMs. = *logistic regression*
+
+The model will predicts the **log-odds** of success as a linear function of your predictors. Link connects the linear predictor (the sum of the model coefficients and variables) to the expected value of the response.
+
+What Are Log-Odds?
+
+-   **Odds** are a way of expressing the chance of something happening versus it not happening.
+
+    -   If the chance of success is 80% (or 0.8), the odds are 0.8 / 0.2 = 4 (so, “4 to 1”).
+
+    -   If the chance is 50%, the odds are 0.5 / 0.5 = 1 (so, “1 to 1”).
+
+-   **Log-odds** means taking the logarithm (usually the natural log) of the odds.
+
+    -   If odds = 4, then log-odds = log(4) ≈ 1.39.
+
+    -   If odds = 1, then log-odds = log(1) = 0.
+
+-   Log-odds can be any number from negative infinity to positive infinity, which makes them easier to use in regression models.
+
+-   In logistic regression (and your GLM), the model predicts the **log-odds** of success, not the probability directly.
+
+In Everyday Terms
+
+-   **Probability** is the chance of something happening (from 0 to 1).
+
+-   **Odds** compare the chance of it happening to not happening.
+
+-   **Log-odds** are just the logarithm of the odds—a way to turn odds into a scale that goes from negative to positive numbers.
+
+<https://bookdown.org/steve_midway/DAR/glms-generalized-linear-models.html>
+
+## 1- Single predictor
+
+We first look at the relationship of 1 predictor with ISM(%) to see if the pairwise correlation is significant.
+
+### - Transcript length
+
+```{r}
+glm_subset1_trans <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvRefLength,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_trans)
+```
+
+### - GC(%)
+
+```{r}
+glm_subset1_GC <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvGC,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_GC)
+```
+
+### - Exon nb
+
+```{r}
+glm_subset1_exon <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvExon,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_exon)
+```
+
+## 2- Two-way combination
+
+All single predictor have a significant pairwise correlation with the variable ISM(%) and can be considered for multiple regression model.
+
+In R, the interaction between the variables in a model are:
+
+> A + B \# test the main effect of each predictor on a variable
+>
+> A / B \# test A and A:B interaction of A and B on the variable and main effect of A
+>
+> A \* B \# test A, B and A:B, main effects of both predictors on the variable and their interactive effect.
+
+### - Explore potential interactions by plotting
+
+#### \* GC and transcript length
+
+```{r}
+ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000,
+       aes(x=weighted_AvRefLength, 
+           y=ISM_perc, 
+           size = weighted_AvGC, 
+           color = weighted_AvGC)) +
+  geom_point(alpha = 0.7) +
+  scale_color_viridis_c(option = "magma") +
+  labs(y = "ISM(%)", x = "Transcript Length",
+       title = "ISM Proportion by Transcript Length and GC Content",
+       size = "GC(%)",
+       color = "GC(%)",
+       caption = "Transcript Length < 9000 and (ISM>0)") +
+  theme(axis.title = element_text(size = 14), 
+        axis.text = element_text(size = 14),
+        axis.text.x = element_text(size = 14),  # Adjust x-axis label size
+        plot.title = element_text(size = 16, face = "bold"), # Adjust title))
+        legend.text = element_text(size = 14),
+        legend.position = "right"
+        ) 
+```
+
+We can see that there is an interaction of GC and transcript length on ISM(%) and thus that they could be combined in a regression model.
+
+#### \* transcript length and exon number
+
+```{r}
+ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000,
+       aes(x=weighted_AvRefLength, 
+           y=ISM_perc, 
+           size = 1/log(weighted_AvExon), 
+           color = 1/log(weighted_AvExon))) +
+  geom_point(alpha = 0.7) +
+  scale_color_viridis_c(option = "magma") +
+  labs(y = "ISM(%)", x = "Transcript Length",
+       title = "ISM Proportion by Transcript Length and Exon number",
+       size = "Nb of exons",
+       color = "Nb of exons",
+       caption = "Transcript Length < 9000 and (ISM>0)") +
+  theme(axis.title = element_text(size = 14), 
+        axis.text = element_text(size = 14),
+        axis.text.x = element_text(size = 14),  # Adjust x-axis label size
+        plot.title = element_text(size = 16, face = "bold"), # Adjust title))
+        legend.text = element_text(size = 14),
+        legend.position = "right"
+        )
+```
+
+We can see that there is an interaction of Nb of exon (if inverse log transformed) and transcript length on ISM(%).
+
+#### \* GC and exon number
+
+```{r}
+ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000,
+       aes(x=1/log(weighted_AvExon), 
+           y=ISM_perc, 
+           size = weighted_AvGC, 
+           color = weighted_AvGC )) +
+  geom_point(alpha = 0.7) +
+  scale_color_viridis_c(option = "magma") +
+  labs(y = "ISM(%)\n(ISM>0)", x = "Transcript Length",
+       title = "ISM Proportion by GC and Exon number",
+       size = "GC(%)",
+       color = "GC(%)",
+       caption = "Transcript Length < 9000 and (ISM>0)") +
+  theme(axis.title = element_text(size = 14), 
+        axis.text = element_text(size = 14),
+        axis.text.x = element_text(size = 14),  # Adjust x-axis label size
+        plot.title = element_text(size = 16, face = "bold"), # Adjust title))
+        legend.text = element_text(size = 14),
+        legend.position = "right"
+        )
+```
+
+There isn't any clear pattern of interaction.
+
+### - Additive model: Transcript length + GC(%)
+
+```{r}
+glm_subset1_Trans_and_GC <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvRefLength + weighted_AvGC,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_Trans_and_GC)
+```
+
+All predictor's correlation are significant.
+
+### - Additive model: Transcript length + Exon nb
+
+```{r}
+glm_subset1_Trans_and_Exon <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvRefLength + weighted_AvExon,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_Trans_and_Exon)
+```
+
+All predictor's correlation are significant.
+
+### - Interaction model :Transcript length \* GC(%)
+
+```{r}
+glm_subset1_Trans_by_GC <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvRefLength * weighted_AvGC,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_Trans_by_GC)
+```
+
+In this interactive model, GC content alone is not significant anymore. We can try to have a model including GC content that is only in interaction with transcript length.
+
+### - Interaction model : Transcript + Transcript length : GC(%)
+
+```{r}
+glm_subset1_Trans_int_GC <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvRefLength + weighted_AvRefLength: weighted_AvGC,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_Trans_int_GC)
+```
+
+### - Interaction model :Transcript length \* Exon nb
+
+```{r}
+glm_subset1_Trans_by_Exon <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvRefLength * weighted_AvExon,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_Trans_by_Exon)
+```
+
+All predictors are significant individually and in interaction.
+
+Among Two-way combinations, we keep the relationship between predictors that are significant:
+
+-   weighted_AvRefLength \* weighted_AvExon
+
+-   weighted_AvRefLength: weighted_AvGC
+
+## 3- Three-way combination
+
+### - Additive model: Transcript length + GC(%) + Exon
+
+```{r}
+glm_subset1_Trans_and_GC_and_exon <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvRefLength + weighted_AvGC + weighted_AvExon,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_Trans_and_GC_and_exon)
+```
+
+All predictors in the additive model are significant.
+
+### - Interaction model 1 : Transcript length \* Exon nb + Transcript length : GC
+
+```{r}
+glm_subset1_Trans_by_exon_and_Trans_by_GC <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvRefLength * weighted_AvExon + weighted_AvRefLength:weighted_AvGC,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_Trans_by_exon_and_Trans_by_GC)
+```
+
+Everything here is highly significant.
+
+### - Interaction model 2 : Transcript length + Exon nb + Transcript length : GC
+
+```{r}
+glm_subset1_Trans_and_exon_and_Trans_int_GC <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvRefLength + weighted_AvExon + weighted_AvRefLength:weighted_AvGC,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_Trans_and_exon_and_Trans_int_GC)
+```
+
+## 4 - Compare models
+
+**Akaike Information Criterion (**AIC) is a statistical measure used in GLM to evaluate and compare the relative quality of different models for a given dataset. It balances model fit and complexity by combining the log-likelihood (how well the model fits the data) with a penalty for the number of parameters used, helping to avoid overfitting. Meaningful when comparing multiple models on the same data
+
+The best model should have the lowest AIC value.
+
+### a - comparing model
+
+```{r}
+library(MuMIn)
+model.sel(glm_subset1_trans, glm_subset1_GC, glm_subset1_exon, glm_subset1_Trans_and_GC, glm_subset1_Trans_and_Exon, glm_subset1_Trans_by_GC, glm_subset1_Trans_by_Exon, glm_subset1_Trans_int_GC, glm_subset1_Trans_and_GC_and_exon, glm_subset1_Trans_by_exon_and_Trans_by_GC, glm_subset1_Trans_and_exon_and_Trans_int_GC)
+```
+
+Best model appears to be the 3way interaction model, glm_subset1_Trans_by_exon_and_Trans_by_GC. Since it is an interactive model, we check the collinearity of each predictor and this **should always be checked in the additive model** (without the interaction) to assess true collinearity (here the glm_subset1_Trans_and_GC_and_exon).
+
+### b - multicollinearity check on best model
+
+<https://easystats.github.io/blog/posts/performance_check_collinearity/>
+
+```{r}
+performance::check_collinearity(glm_subset1_Trans_and_GC_and_exon)
+```
+
+All predictors have a low VIF value **(Variance Inflation Factor).** VIFs quantify the extent to which a predictor variable's variance is inflated by multicollinearity with other predictors. A VIF above 10 is often considered a cause for concern
+
+-   **VIF \< 5:** Low/no multicollinearity.
+
+-   **VIF 5–10:** Moderate multicollinearity.
+
+-   **VIF \> 10:** Severe multicollinearity.
+
+**Low VIFs in the additive model** means that *transcript length* ,*GC* and exon numbers are not highly correlated with each other as predictors.
+
+### c - performance on best model
+
+```{r}
+library(performance)
+check_model(glm_subset1_Trans_by_exon_and_Trans_by_GC)
+```
+
+### d - Linearity check of the predictors on best model
+
+<https://www.bookdown.org/rwnahhas/RMPH/mlr-linearity.html>
+
+The crPlots will return an error for interactive model.
+
+```{r}
+library(car)
+# For your fitted model, e.g. glm_model
+crPlots(glm_subset1_Trans_and_GC_and_exon)
+```
+
+```{r}
+# plot individually to be able to personalize each graph (using basic R that is usesd by crplot)
+# Example for one predictor
+crPlot(glm_subset1_Trans_and_GC_and_exon,
+       variable = "weighted_AvRefLength",
+       xlab = "Transcript Length",
+       ylab = "Component + Residual",
+       main = "No transformation")
+
+```
+
+```{r}
+crPlot(glm_subset1_Trans_and_GC_and_exon,
+       variable = "weighted_AvExon",
+       xlab = "Nb of Exons",
+       ylab = "Component + Residual",
+       main = "No transformation")
+```
+
+```{r}
+crPlot(glm_subset1_Trans_and_GC_and_exon,
+       variable = "weighted_AvGC",
+       xlab = "GC(%)",
+       ylab = "Component + Residual",
+       main = "No transformation")
+```
+
+The linearity of weighted_AvExon is not met. We can try to transform this predictor to increase their linearity, as well as test for the other predictors to improve their linearity. Square root, log, inverse, square can be used for transforming the predictor.
+
+### e - Improve model predictor's linearity
+
+We test their linearity first in an additive model using crPlots that only accept additive models.
+
+```{r}
+# with the log of Exon:
+glm_subset1_Trans_and_GC_and_logexon <-
+  glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ weighted_AvRefLength + weighted_AvGC + log(weighted_AvExon),
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+car::crPlots(glm_subset1_Trans_and_GC_and_logexon)
+```
+
+```{r}
+# with the inverse log of Exon:
+glm_subset1_Trans_and_GC_and_Invlogexon <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ sqrt(weighted_AvRefLength) + weighted_AvGC + I(1/log(weighted_AvExon)),
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+car::crPlots(glm_subset1_Trans_and_GC_and_Invlogexon)
+```
+
+```{r}
+crPlot(glm_subset1_Trans_and_GC_and_Invlogexon,
+       variable = "I(1/log(weighted_AvExon))",
+       xlab = "1(log(Nb of Exons)",
+       ylab = "Component + Residual",
+       main = "With transformation")
+```
+
+```{r}
+crPlot(glm_subset1_Trans_and_GC_and_Invlogexon,
+       variable = "sqrt(weighted_AvRefLength)",
+       xlab = "sqrt(Transcript Length)",
+       ylab = "Component + Residual",
+       main = "With transformation")
+```
+
+The linearity of Exons and of transcript length is not perfect but is improved here.
+
+```{r}
+# check collinearity of transformed predictors
+check_collinearity(glm_subset1_Trans_and_GC_and_Invlogexon)
+```
+
+Adding a transfo of transcript length with square root and inverse log of Exon improves a bit the linearity of these predictors. For Exon, the complete linearity is not met and the model might underestimate ISM(%) for low number of Nb of exons.
+
+#### \* Re-run the model with changes
+
+Implement the change in the original chosen interactive 3way model:
+
+```{r}
+glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_by_Invlogexon <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ 
+    sqrt(weighted_AvRefLength) * I(1/log(weighted_AvExon)) + weighted_AvRefLength:weighted_AvGC,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_by_Invlogexon)
+```
+
+The interaction of is not significant. I test only additive correlation of Exon and transcript length instead.
+
+#### \* Improve the model combination
+
+```{r}
+glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ sqrt(weighted_AvRefLength) + I(1/log(weighted_AvExon)) + weighted_AvRefLength:weighted_AvGC,
+  family = binomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon)
+```
+
+pseudo-R2 is: 1-(221.94/942.81) = 0.7645973
+
+**Pseudo-R² (McFadden) Interpretation:**
+
+-   **What it measures**: Improvement in model likelihood relative to the null model (intercept-only).
+
+-   **Interpretation**: Your model explains \~76.5% of the **deviance** compared to the null model.
+
+-   **Strength**: High values (\>0.4) are considered excellent for GLMs.
+
+### f - Check performance of final model.
+
+```{r}
+performance::check_model(glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon)
+```
+
+```{r}
+Data_ISM_predictors_TUSCO_posISM_TL9000$pearson_resid <- residuals(glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon, type = "pearson")
+
+Data_ISM_predictors_TUSCO_posISM_TL9000$outlier_flag <- abs(Data_ISM_predictors_TUSCO_posISM_TL9000$pearson_resid) > 5
+
+table(Data_ISM_predictors_TUSCO_posISM_TL9000$outlier_flag)
+
+# pearson_resid > 5, no outlier is found in the TUSCO training set.
+```
+
+#### \* plot effects
+
+```{r}
+library(ggeffects)
+eff_glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon <- 
+  ggpredict(glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon,
+            terms = c("weighted_AvRefLength", 
+                      "weighted_AvGC[20,40, 60]",
+                      "weighted_AvExon[2,5,10]"))
+
+# Plot and customize
+plot_glm_model_selected <- 
+  plot(eff_glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon) +
+  labs(
+    title = "Predicted ISM(%) by Transcript Length\nacross Nb of exons and GC(%)",
+    x = "Average Reference Transcript Length",
+    y = "Predicted ISM (%)",
+    color = "GC(%)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", 
+                              hjust = 0.5),
+    legend.position = "right",
+    strip.text = element_text(size = 12)
+  )
+
+plot_glm_model_selected
+
+
+```
+
+#### \* Predicted versus observed
+
+```{r}
+# Calculate predicted ISM percentages
+Data_ISM_predictors_TUSCO_posISM_TL9000 <- 
+  Data_ISM_predictors_TUSCO_posISM_TL9000 %>%
+  mutate(pred_ISM = predict(glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon, 
+                            newdata = ., type = "response"))
+         # predicted proportion (ISM %)
+
+# Observed proportions
+Data_ISM_predictors_TUSCO_posISM_TL9000$observed_ISM <- Data_ISM_predictors_TUSCO_posISM_TL9000$ISM / 
+  Data_ISM_predictors_TUSCO_posISM_TL9000$FL_tot
+
+```
+
+##### - get the R2
+
+```{r}
+# Step 1: Linear regression of observed vs predicted
+fit_chosenMODEL <- lm(observed_ISM ~ pred_ISM, 
+                      data = Data_ISM_predictors_TUSCO_posISM_TL9000)
+
+# Step 2: Get R²
+summary(fit_chosenMODEL)$r.squared
+```
+
+##### - plot
+
+```{r}
+# Visualize Observed vs. Predicted and Outliers
+library(ggplot2)
+ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000, 
+       aes(x = 100*pred_ISM, 
+           y = 100*observed_ISM)) +
+  geom_point(aes(color = outlier_flag)) +
+  scale_color_manual(values = c("FALSE" = "blue", "TRUE" = "red"), 
+                     name = "Outlier Flag") +
+   geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Observed vs Predicted ISM (%) - TUSCO 80",
+       x = "Predicted ISM(%)",
+       y = " Observed ISM(%)",
+       subtitle = paste("R² =", round(summary(fit_chosenMODEL)$r.squared, 2), "with final model"),
+       caption = " TUSCO with ISM(%) > 0, transcript < 9000 nu") + xlim(0,100) + ylim(0,100)
+
+```
+
+#### \* calibration plot
+
+```{r}
+# Calculate Predicted Values
+Model_Data_ISM_predictors_TUSCO_posISM_TL9000 <- 
+  Data_ISM_predictors_TUSCO_posISM_TL9000 %>%
+  mutate(predicted_prob = 
+           predict(glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon, 
+                   type = "response"))
+
+# Bin Predictions (e.g., into Deciles)
+library(dplyr)
+library(ggplot2)
+
+calib_data <- Model_Data_ISM_predictors_TUSCO_posISM_TL9000 %>%
+  mutate(bin = ntile(predicted_prob, 10)) %>%  # 10 bins (deciles)
+  group_by(bin) %>%
+  summarize(
+    mean_pred = mean(predicted_prob),
+    mean_obs = mean(ISM / FL_tot),  # observed proportion in each bin
+    n = n()
+  )
+
+# Plot Calibration Curve
+ggplot(calib_data, aes(x = mean_pred, y = mean_obs)) +
+  geom_point(size = 2) +
+  geom_line() +
+  geom_abline(slope = 1, 
+              intercept = 0, 
+              linetype = "dashed",
+              color = "gray") +  # perfect calibration
+  labs(
+    x = "Mean Predicted Probability",
+    y = "Mean Observed Proportion",
+    title = "Calibration Plot of final model"
+  ) +
+  theme_minimal(base_size = 15)
+
+```
+
+Full-length direct RNA sequencing uncovers stress-granule dependent RNA decay upon cellular stress <https://elifesciences.org/reviewed-preprints/96284v1>. "Our findings reveal RNA decay as a key determinant of RNA metabolism upon cellular stress and dependent on stress-granule formation."
+
+Ways to improve the model : test for dispersion for instance:
+
+``` bash
+# Calculate dispersion parameter manually
+deviance(glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon) / df.residual(glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon)
+
+# dispersion ideally should be close to 1.
+```
+
+The GLM can be potentially improved by taking into account dispersion if existing, by using a quasibinomial model:
+
+``` bash
+glmQuasi <- glm(
+  formula = cbind(ISM, FL_tot - ISM) ~ 
+  sqrt(weighted_AvRefLength) + I(1/log(weighted_AvExon)) + weighted_AvRefLength:weighted_AvGC,
+  family = quasibinomial(link = "logit"),
+  data = Data_ISM_predictors_TUSCO_posISM_TL9000
+)
+
+summary(glmQuasi)
+```
+
+For this project, I did not go further for time limit reasons and kept the final glm model found.
+
+# 3. Apply model on Exp data
+
+=\> used on data (TUSCO genes removed)
+
+## 1. Filter data to keep non TUSCO genes
+
+```{r}
+Data_ISM_predictors_nonTUSCO <- Data_ISM_predictors %>% 
+  filter(ISM_perc > 0 & 
+           weighted_AvRefLength < 9000 & 
+           !Gene_name %in% BUSCO_pancreasTUSCO_list) %>%
+  group_by(Gene_name) %>%
+  filter(n_distinct(sample) == 2) %>%                                   
+  # keep genes present in both samples
+  filter(!(all(ISM_perc == 0))) %>%                                       
+  # remove genes where both ISM_perc = 0 (i.e., all ISM_perc are 0)
+  ungroup()
+# 24330/2 = 12165 genes shared by bc01 and bc02
+# here we are interested if some genes show ISM_perc = 0 for one sample and ISM_perc > 0 for the other sample, so we keep these genes.
+```
+
+## 2. Calculations of expected ISM and residuals (observation - expected)
+
+The model is a **binomial GLM with a logit link**, so the output of `predict()` by default is the **logit (log-odds) scale**. To get the **predicted ISM percentage** (proportion), we need to use `type = "response"` in the `predict()` function.
+
+```{r}
+# Calculate predicted ISM percentages
+Data_ISM_predictors_nonTUSCO <- Data_ISM_predictors_nonTUSCO %>%
+  mutate(pred_ISM = predict(glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon, 
+                            newdata = ., type = "response"))
+         # predicted proportion (ISM %)
+
+# Observed proportions
+Data_ISM_predictors_nonTUSCO$observed_ISM <- Data_ISM_predictors_nonTUSCO$ISM / Data_ISM_predictors_nonTUSCO$FL_tot
+```
+
+## 3. Evaluate Model Performance
+
+```{r}
+# Error is the difference between observed and predicted
+Data_ISM_predictors_nonTUSCO$error <- Data_ISM_predictors_nonTUSCO$observed_ISM - Data_ISM_predictors_nonTUSCO$pred_ISM
+
+mean_abs_error <- mean(abs(Data_ISM_predictors_nonTUSCO$error), na.rm = TRUE)
+cor_pred_obs <- cor(Data_ISM_predictors_nonTUSCO$pred_ISM, Data_ISM_predictors_nonTUSCO$observed_ISM, use = "complete.obs")
+print(mean_abs_error) # indicates how far predictions are from the observed values
+print(cor_pred_obs) # correlation between Observed vs. Predicted), should be close to 1
+```
+
+Here we expect that ISM_perc is not only due to technical degradation and thus when higher than the prediction would be biological noise, which seems to be the case based on the evaluation of the model.
+
+## 4. Flag genes with ISM(%) deviating from predicted
+
+### a - Calculate pearson residuals
+
+```{r}
+# Calculate Pearson residuals for the experimental set manually
+# Pearson residuals measure how far each observed value is from the model's predicted value, scaled by the expected standard deviation under the model.
+Data_ISM_predictors_nonTUSCO$pearson_resid <- (Data_ISM_predictors_nonTUSCO$ISM - Data_ISM_predictors_nonTUSCO$pred_ISM * Data_ISM_predictors_nonTUSCO$FL_tot) /
+  sqrt(Data_ISM_predictors_nonTUSCO$FL_tot * Data_ISM_predictors_nonTUSCO$pred_ISM * (1 - Data_ISM_predictors_nonTUSCO$pred_ISM))
+```
+
+### b - **Test several** pearson_resid **threshold**
+
+#### \* count
+
+```{r}
+library(dplyr)
+
+thresholds <- c(5, 6, 7, 8, 9, 10)
+
+# Create a summary table
+summary_table <- Data_ISM_predictors_nonTUSCO %>%
+  filter(observed_ISM > 0) %>%
+  group_by(sample) %>%
+  summarise(
+    count_above_5 = sum(abs(pearson_resid) > 5, na.rm = TRUE),
+    count_above_6 = sum(abs(pearson_resid) > 6, na.rm = TRUE),
+    count_above_7 = sum(abs(pearson_resid) > 7, na.rm = TRUE),
+    count_above_8 = sum(abs(pearson_resid) > 8, na.rm = TRUE),
+    count_above_9 = sum(abs(pearson_resid) > 9, na.rm = TRUE),
+    count_above_10 = sum(abs(pearson_resid) > 10, na.rm = TRUE)
+  )
+
+summary_table <- Data_ISM_predictors_nonTUSCO %>%
+  filter(observed_ISM > 0) %>%
+  group_by(sample) %>%
+  summarise(
+    count_above_5 = sum(pearson_resid > 5, na.rm = TRUE),
+    count_above_6 = sum(pearson_resid > 6, na.rm = TRUE),
+    count_above_7 = sum(pearson_resid > 7, na.rm = TRUE),
+    count_above_8 = sum(pearson_resid > 8, na.rm = TRUE),
+    count_above_9 = sum(pearson_resid > 9, na.rm = TRUE),
+    count_above_10 = sum(pearson_resid > 10, na.rm = TRUE)
+  )
+
+
+print(summary_table)
+```
+
+#### \* plot
+
+```{r}
+# plotting - reformating table first
+library(tidyr)
+library(ggplot2)
+
+summary_table_long <- summary_table %>%
+  tidyr::pivot_longer(
+    cols = starts_with("count_above_"),
+    names_to = "threshold",
+    values_to = "count"
+  )
+
+# Clean Up Threshold Labels
+summary_table_long$threshold <- gsub("count_above_", ">", 
+                                     summary_table_long$threshold)
+
+# Set the order of the threshold:
+summary_table_long$threshold <- factor(
+  summary_table_long$threshold,
+  levels = c(">5", ">6", ">7", ">8", ">9", ">10")
+)
+
+
+# Plot with ggplot2
+ggplot(summary_table_long, aes(x = threshold, 
+                               y = count, 
+                               fill = sample)) +
+  geom_bar(stat = "identity", 
+           position = position_dodge(width = 0.6), 
+           width=0.5 ) +
+  geom_text(aes(label = count), 
+            position = position_dodge(width = 0.5), 
+            vjust = -0.3, size = 3) +
+  labs(x = "Pearson Residual Threshold", 
+       y = "Count", 
+       fill = "Sample",
+       title = " Number of genes showing ISM(%)\nabove deviation tested cut-offs") +
+  scale_fill_manual(values = c("bc01" = "lightblue", "bc02" = "darkblue"),
+                    labels = c("bc01" = "stress", "bc02" = "control")) +
+  theme_minimal(base_size = 15) +
+  theme(legend.position = "bottom")
+```
+
+#### \* statistical difference between samples for the counts at each threshold
+
+```{r}
+total_for_bc01 <- nrow(filter(Data_ISM_predictors_nonTUSCO, sample == "bc01"))
+total_for_bc02 <- nrow(filter(Data_ISM_predictors_nonTUSCO, sample == "bc02"))
+
+total_per_sample <- 12165
+
+# Reshape to Long Format summary_table
+library(tidyr)
+library(dplyr)
+
+summary_table_long2 <- summary_table %>%
+  pivot_longer(
+    cols = starts_with("count_above_"),
+    names_to = "threshold_pearson_resid",
+    values_to = "count_above"
+  )
+
+summary_table_long2$threshold_pearson_resid <- gsub("count_above_", "", summary_table_long2$threshold_pearson_resid)
+
+
+# Spread to Wide Format by Threshold
+summary_table_wide <- summary_table_long2 %>%
+  pivot_wider(names_from = sample, values_from = count_above)
+
+# Calculate Difference in Proportion and p-value
+summary_table_wide <- summary_table_wide %>%
+  rowwise() %>%
+  mutate(
+    prop_bc01 = bc01 / total_per_sample,
+    prop_bc02 = bc02 / total_per_sample,
+    diff_prop = prop_bc01 - prop_bc02,
+    p_value = prop.test(c(bc01, bc02), c(total_per_sample, total_per_sample))$p.value
+  ) %>%
+  ungroup()
+
+print(summary_table_wide)
+```
+
+**No statistically significant difference** in the proportion of outliers between bc01 and bc02 at any threshold.\
+The **differences in proportions (diff_prop)** are also very small at all thresholds.
+
+I am choosing threshold 7 to be stringent and have enough genes for a GO term enrichment analysis.
+
+#### \* plot deviated increased observed ISM(%) with pearson_resid \> 7
+
+```{r}
+# Check we have for each gene, a row for each sample :
+Data_ISM_predictors_nonTUSCO %>%
+  count(Gene_name, sample) %>%
+  count(Gene_name) %>%
+  filter(n != 2)
+```
+
+```{r}
+# Flag outliers: |residual| > 2 (potential), > 3 (highly unusual)
+Data_ISM_predictors_nonTUSCO$outlier_flag <- abs(Data_ISM_predictors_nonTUSCO$pearson_resid) > 7
+
+Data_ISM_predictors_nonTUSCO <- Data_ISM_predictors_nonTUSCO %>%
+  mutate(outlier_flag_Increased_ISM = case_when(
+    outlier_flag == TRUE & (observed_ISM > pred_ISM) ~ "yes",
+    TRUE ~"no"
+  ))
+```
+
+```{r}
+sample_label <- c(bc01 = "Stress", bc02 = "Control")
+
+ggplot(Data_ISM_predictors_nonTUSCO, 
+       aes(x = 100*pred_ISM, 
+           y = 100* observed_ISM, 
+           color = outlier_flag_Increased_ISM)) +
+  geom_point(size = 0.4) +
+  facet_wrap(~ sample, 
+             labeller = labeller(sample = sample_label)) +
+  #scale_shape_manual(values = c("bc01" = 20, "bc02" = 0)) +
+  geom_abline(slope = 1, intercept = 0, 
+              linetype = "dashed", 
+              color = "black", 
+              size = 0.8) +
+  scale_color_manual(values = c("no" = "grey", "yes" = "darkgreen"),
+                     name = "ISM(%)\nincreased") +
+  theme_bw(base_size = 14) +
+  labs(title = "Observed vs. Expected ISM(%) - Kinnex sample",
+       subtitle = paste0("Number of genes analyzed: " , 
+                         (round(nrow(Data_ISM_predictors_nonTUSCO)/2))),
+       x = "Expected ISM (%)",
+       y = "Observed ISM (%)",
+       caption = "formula = cbind(ISM, FL_tot - ISM) ~ sqrt(weighted_AvRefLength) + I(1/log(weighted_AvExon)) + weighted_AvRefLength:weighted_AvGC\noutlier_flag = pearson_resid > 7") +
+  guides(color = guide_legend(override.aes = list(size = 3)))
+```
+
+#### \* Number of genes with deviated increased observed ISM(%)
+
+```{r}
+# plot Nb of genes with increased observed ISM(%) by sample
+sample_label <- c(bc01 = " stress", bc02 = "control")
+
+ggplot(Data_ISM_predictors_nonTUSCO) +
+  geom_bar(aes(x = outlier_flag_Increased_ISM, 
+               fill = outlier_flag_Increased_ISM), 
+           width = 0.3) +
+  facet_wrap(~ sample, 
+             labeller = labeller(sample = sample_label)) +
+  geom_text(stat = "count", 
+            aes(x = outlier_flag_Increased_ISM, 
+                label = after_stat(count)), 
+            vjust = 1.5) +
+  theme(legend.position = "none") +
+  labs(x = "Increased ISM(%) of transcripts",
+       y = "Gene count",
+       title = "Number of genes with increased proportion of ISM isoforms",
+       caption = "Thresold increase: pearson_resid > 7") +
+  scale_fill_manual(values = c("no" = "grey", "yes" = "lightgreen"))
+```
+
+```{r}
+# Summarize the data
+category_counts_all <- Data_ISM_predictors_nonTUSCO %>%
+  dplyr::distinct(Gene_name, outlier_flag_Increased_ISM) %>%
+  dplyr::count(outlier_flag_Increased_ISM) %>%
+  dplyr::rename(category = outlier_flag_Increased_ISM, count = n)
+
+# Compute label positions
+pie_data_all <- category_counts_all %>%
+  arrange(desc(category)) %>%
+  mutate(
+    fraction = count / sum(count),
+    ymax = cumsum(fraction),
+    ymin = c(0, head(ymax, n = -1)),
+    labelPosition = (ymax + ymin) / 2,
+    label = count
+  )
+
+library(ggplot2)
+library(ggrepel)
+
+ggplot(pie_data_all, aes(ymax = ymax, 
+                         ymin = ymin, 
+                         xmax = 1, 
+                         xmin = 0, 
+                         fill = category)) +
+  geom_rect(color = "white") +
+  geom_label_repel(
+    aes(x = 1.15, y = labelPosition, 
+        label = label),
+    size = 3.5,
+    nudge_x = 0.2,
+    show.legend = FALSE,
+    segment.size = 0.2,
+    direction = "y"
+  ) +
+  scale_fill_manual(
+    values = c("gray70", "forestgreen"),
+    labels = c(
+      "no" = "No increase in ISM(%)", 
+      "yes" = "Increase in ISM(%)"
+    )
+  ) +
+  coord_polar(theta = "y", start = pi) + #start = pi allows to flip upside down
+  xlim(c(0, 2)) +
+  theme_void() +
+  ggtitle("Genes with Increased ISM per Sample") +
+  theme(legend.position = "right")
+```
+
+### c - Test that TUSCO genes are not flagged
+
+```{r}
+Data_ISM_predictors_filt <- Data_ISM_predictors %>% 
+  filter(ISM_perc > 0 & weighted_AvRefLength < 9000 ) %>%
+  group_by(Gene_name) %>%
+  filter(n_distinct(sample) == 2) %>%                                   
+  # keep genes present in both samples
+  filter(!(all(ISM_perc == 0))) %>%                                       
+  # remove genes where both ISM_perc = 0 (i.e., all ISM_perc are 0)
+  ungroup()
+
+# Flag TUSCO
+Data_ISM_predictors_filt <- Data_ISM_predictors_filt %>%
+  mutate(tusco = case_when(
+    Gene_name %in% BUSCO_pancreasTUSCO_list ~ "tusco",
+    !(Gene_name) %in% BUSCO_pancreasTUSCO_list ~ "nonTUSCO"
+  ))
+```
+
+```{r}
+# Calculate predicted ISM percentages
+Data_ISM_predictors_filt <- Data_ISM_predictors_filt %>%
+  mutate(pred_ISM = predict(glm_subset1_sqrtTrans_int_GC_and_sqrtTrans_and_Invlogexon, 
+                            newdata = ., type = "response"))
+         # predicted proportion (ISM %)
+
+# Observed proportions
+Data_ISM_predictors_filt$observed_ISM <- Data_ISM_predictors_filt$ISM / Data_ISM_predictors_filt$FL_tot
+
+
+# Calculate Pearson residuals for the experimental set
+Data_ISM_predictors_filt$pearson_resid <- (Data_ISM_predictors_filt$ISM - Data_ISM_predictors_filt$pred_ISM * Data_ISM_predictors_filt$FL_tot) /
+  sqrt(Data_ISM_predictors_filt$FL_tot * Data_ISM_predictors_filt$pred_ISM * (1 - Data_ISM_predictors_filt$pred_ISM))
+
+# Flag outliers: |residual| > 2 (potential), > 3 (highly unusual)
+Data_ISM_predictors_filt$outlier_flag <- abs(Data_ISM_predictors_filt$pearson_resid) > 5 # test the lowest threshold
+
+
+Data_ISM_predictors_filt <- Data_ISM_predictors_filt %>%
+  mutate(tusco_flag = case_when(
+    tusco == "tusco" & outlier_flag == TRUE ~ "tusco_flag",
+    tusco == "nonTUSCO" & outlier_flag == TRUE ~ "nonTUSCO_flag",
+    TRUE ~ "none"
+  ))
+
+# => check if tusco_flag are found in dataframe => none !
+```
+
+### d - Flag when FL_tot \<5 among pearson_resid \> 7
+
+```{r}
+Data_ISM_predictors_nonTUSCO <- Data_ISM_predictors_nonTUSCO %>%
+  mutate(flag_lowFL = case_when(
+    FL_tot < 5 ~ "yes",
+    TRUE ~"no"
+  ))
+```
+
+```{r}
+# plot Nb of genes with increased observed ISM(%) by sample
+flag_lowFL_label <- c(yes = "Tot FL count < 5", no = "Tot FL count > 5")
+
+bc01_plot <-
+ggplot(filter(Data_ISM_predictors_nonTUSCO, sample == "bc01")) +
+  geom_bar(aes(x = outlier_flag_Increased_ISM, 
+               fill = outlier_flag_Increased_ISM), 
+           width = 0.3) +
+  facet_wrap(~ flag_lowFL, 
+             labeller = labeller(flag_lowFL = flag_lowFL_label)) +
+  geom_text(stat = "count", aes(x = outlier_flag_Increased_ISM, 
+                                label = after_stat(count)), 
+            vjust = 0.7, 
+            hjust = -1) +
+  theme(legend.position = "none") +
+  labs(x = "Increased ISM(%) of transcripts",
+       y = "Gene count",
+       subtitle = "STRESS SAMPLE",
+       title = "Number of genes with increased proportion of ISM isoforms",
+       caption = "Thresold increase: pearson_resid > 7") +
+  scale_fill_manual(values = c("no" = "grey", "yes" = "lightgreen"))
+
+bc02_plot <-
+ggplot(filter(Data_ISM_predictors_nonTUSCO, 
+              sample == "bc02")) +
+  geom_bar(aes(x = outlier_flag_Increased_ISM, 
+               fill = outlier_flag_Increased_ISM), 
+           width = 0.3) +
+  facet_wrap(~ flag_lowFL, 
+             labeller = labeller(flag_lowFL = flag_lowFL_label)) +
+  geom_text(stat = "count", 
+            aes(x = outlier_flag_Increased_ISM, 
+                label = after_stat(count)),
+            vjust = 0.7, hjust = -1) +
+  theme(legend.position = "none") +
+  labs(x = "Increased ISM(%) of transcripts",
+       y = "Gene count",
+       subtitle = "CONTROL SAMPLE",
+       caption = "Thresold increase: pearson_resid > 7") +
+  scale_fill_manual(values = c("no" = "grey", "yes" = "lightgreen"))
+
+library(patchwork)
+bc01_plot / bc02_plot
+```
+
+### e - Flag unique increased ISM genes or with higher ISM per sample
+
+#### \* calculate
+
+```{r}
+Data_ISM_predictors_nonTUSCO <- Data_ISM_predictors_nonTUSCO %>%
+  group_by(Gene_name) %>%
+  mutate(sample_ISM_higher = case_when(
+    outlier_flag_Increased_ISM[sample == "bc01"] == "yes" &
+      outlier_flag_Increased_ISM[sample == "bc02"] == "no" ~ "bc01_only",
+    
+    outlier_flag_Increased_ISM[sample == "bc01"] == "no" & 
+      outlier_flag_Increased_ISM[sample == "bc02"] == "yes" ~ "bc02_only",
+    
+    (outlier_flag_Increased_ISM[sample == "bc01"] == "yes" & 
+       outlier_flag_Increased_ISM[sample == "bc02"] == "yes") & 
+      (observed_ISM[sample == "bc01"] > observed_ISM[sample == "bc02"]) ~ "bc01_higher",
+    
+    (outlier_flag_Increased_ISM[sample == "bc01"] == "yes" & 
+       outlier_flag_Increased_ISM[sample == "bc02"] == "yes") & 
+      (observed_ISM[sample == "bc01"] < observed_ISM[sample == "bc02"]) ~ "bc02_higher",
+    (outlier_flag_Increased_ISM[sample == "bc01"] == "yes" & 
+       outlier_flag_Increased_ISM[sample == "bc02"] == "yes") & 
+      (observed_ISM[sample == "bc01"] == observed_ISM[sample == "bc02"]) ~ "similar_increase",
+    
+    TRUE ~ "none" )) %>%
+  ungroup()
+```
+
+#### \* plot using pie chart - all data
+
+```{r}
+# Plot as a pie chart
+library(dplyr)
+
+# Summarize the data
+category_counts <- Data_ISM_predictors_nonTUSCO %>%
+  dplyr::distinct(Gene_name, sample_ISM_higher) %>%
+  dplyr::count(sample_ISM_higher) %>%
+  dplyr::rename(category = sample_ISM_higher, count = n)
+
+# Compute label positions
+pie_data <- category_counts %>%
+  arrange(desc(category)) %>%
+  mutate(
+    fraction = count / sum(count),
+    ymax = cumsum(fraction),
+    ymin = c(0, head(ymax, n = -1)),
+    labelPosition = (ymax + ymin) / 2,
+    label = count
+  )
+
+# Create pie
+library(ggplot2)
+
+# Create pie chart with better label placement
+library(ggrepel)
+
+# Set the order of the category:
+pie_data$sample_ISM_higher <- factor(
+  pie_data$category,
+  levels = c("bc01_only", "bc01_higher", "bc02_only", 
+             "bc02_higher", "similar_increase", "none")
+)
+
+
+ggplot(pie_data, aes(ymax = ymax, ymin = ymin, xmax = 1, 
+                     xmin = 0, fill = category)) +
+  geom_rect(color = "white") +
+  geom_label_repel(
+    aes(x = 1.15, y = labelPosition, label = label),
+    size = 3.5,
+    nudge_x = 0.2,
+    show.legend = FALSE,
+    segment.size = 0.2,
+    direction = "y"
+  ) +
+  scale_fill_manual(
+    values = c("forestgreen", "darkgreen", "#56B4E9", "lightblue", "gray70", "#E69F00"),
+    labels = c(
+      "bc01_only" = "Stress only", 
+      "bc02_only" = "Control only", 
+      "bc01_higher" = "Stress > Control ISM(%)",
+      "bc02_higher" = "Control > Stress ISM(%)",
+      "similar_increase" = "similar ISM(%)",
+      "none" = "No Increased ISM"
+    )
+  ) +
+  coord_polar(theta = "y") +
+  xlim(c(0, 2)) +
+  theme_void() +
+  ggtitle("Genes with Increased ISM per Sample") +
+  theme(legend.position = "right")
+
+```
+
+#### \* plot using waffle chart - only data with increased ISM
+
+```{r}
+library(waffle)
+library(ggplot2)  # waffle uses ggplot2 for plotting
+```
+
+```{r}
+library(dplyr)
+
+# Define desired order of the groups
+desired_order <- c(
+  "Stress only",
+  "Stress > Control",
+  "Control only",
+  "Control > Stress",
+  "Similar increased ISM(%)"
+)
+
+
+IncreasedISM_counts <- Data_ISM_predictors_nonTUSCO %>%
+  filter(sample_ISM_higher != "none") %>%
+  mutate(
+    category_label = dplyr::recode(
+      as.character(sample_ISM_higher),
+      "bc01_only" = "Stress only",
+      "bc01_higher" = "Stress > Control",
+      "bc02_only" = "Control only",
+      "bc02_higher" = "Control > Stress",
+      "similar_increase" = "Similar increased ISM(%)"
+    ) ,
+    category_label = factor(category_label, levels = desired_order)
+  ) %>%
+  dplyr::distinct(Gene_name, category_label) %>%
+  dplyr::count(category_label, name = "count") %>%
+  mutate(
+    label_with_count = paste0(category_label, " (n=", count, ")")
+  )
+
+# Build the Named Vector for the Waffle Chart
+waffle_vec <- setNames(IncreasedISM_counts$count, 
+                       IncreasedISM_counts$label_with_count)
+
+# Plot the Waffle Chart
+library(waffle)
+
+waffle(
+  parts = waffle_vec,
+  rows = 25,
+  colors = c("seagreen3", "palegreen4", "dodgerblue3", "#56B4E9", "violetred"),
+  title = "Groups of genes with Increased ISM",
+  legend_pos = "right"
+)
+
+```
+
+waggle can also be done using geom_waffle in ggplot2
+
+### f - GO term enrichment : **over-representation analysis (ORA)** - no count
+
+```{r}
+library(clusterProfiler)
+#BiocManager::install("org.Hs.eg.db")
+library(org.Hs.eg.db)
+```
+
+#### \* uniques genes with increased ISM(%)
+
+```{r}
+# extract the list of "All expressed genes" for the universe parameter in enrichGO for each sample
+all_expressed_genes <- Data_ISM_predictors_nonTUSCO %>%
+  dplyr::select(Gene_name) %>% distinct(Gene_name) %>% pull(Gene_name)
+```
+
+##### - bc01 sample: stress condition
+
+```{r}
+# extract unique genes in bc01 with increased ISM(%)
+bc01_ISM_UniqGenes <- Data_ISM_predictors_nonTUSCO %>% 
+  distinct(Gene_name,sample_ISM_higher) %>%
+  dplyr::filter(sample_ISM_higher == "bc01_only") %>% 
+  pull(Gene_name)
+```
+
+```{r}
+ego_bc01_UniqGenes <- enrichGO(
+  gene          = bc01_ISM_UniqGenes,
+  universe = all_expressed_genes,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "SYMBOL",  # or "ENSEMBL" if using Ensembl ID
+  ont           = "ALL",      # or "BP", "MF", "CC"
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  qvalueCutoff  = 0.2,
+  readable      = TRUE
+)
+
+head(ego_bc01_UniqGenes)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+# Visualization using a barplot 
+plot_bc01_uniq <- dotplot(ego_bc01_UniqGenes, showCategory=20)
+plot_bc01_uniq + 
+  labs(title = "GO term enrichment analysis for genes\nwith increased ISM, unique in the stress sample")
+```
+
+##### - bc02 sample: control condition
+
+```{r}
+# extract unique genes in bc01 with increased ISM(%)
+bc02_ISM_UniqGenes <- Data_ISM_predictors_nonTUSCO %>% 
+  distinct(Gene_name, sample_ISM_higher) %>%
+  dplyr::filter(sample_ISM_higher == "bc02_only") %>% 
+  pull(Gene_name)
+```
+
+```{r}
+ego_bc02_UniqGenes <- enrichGO(
+  gene          = bc02_ISM_UniqGenes,
+  universe = all_expressed_genes,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "SYMBOL",  # or "ENSEMBL" if using Ensembl ID
+  ont           = "ALL",      # or "BP", "MF", "CC"
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  qvalueCutoff  = 0.2,
+  readable      = TRUE
+)
+
+head(ego_bc02_UniqGenes)
+```
+
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+#| fig-align: center
+#| out-width: 100%
+# Visualization using a barplot 
+plot_bc02_uniq <- dotplot(ego_bc02_UniqGenes, showCategory=20)
+plot_bc02_uniq + labs(title = "GO term enrichment analysis for genes\nwith increased ISM, unique in the control sample")
+```
+
+#### \* uniques- + higher ISM(%) genes
+
+##### - bc01 sample: stress condition
+
+```{r}
+# extract unique genes and genes with higher ISM(%) in bc01
+bc01_ISM_Genes <- Data_ISM_predictors_nonTUSCO %>% 
+  distinct(Gene_name, sample_ISM_higher) %>%
+  dplyr::filter(sample_ISM_higher %in% c("bc01_only", "bc01_higher")) %>% 
+  pull(Gene_name)
+```
+
+```{r}
+ego_bc01_Genes <- enrichGO(
+  gene          = bc01_ISM_Genes,
+  universe = all_expressed_genes,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "SYMBOL",  # or "ENSEMBL" if using Ensembl ID
+  ont           = "ALL",      # or "BP", "MF", "CC"
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  qvalueCutoff  = 0.2,
+  readable      = TRUE
+)
+
+head(ego_bc01_Genes)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# Visualization using a barplot 
+plot_bc01 <- dotplot(ego_bc01_Genes, showCategory=10)
+plot_bc01 + labs(title = "GO term enrichment analysis for genes\nwith increased ISM, unique or with higher ISM(&) in the stress sample")
+```
+
+##### - bc02 sample: control condition
+
+```{r}
+# extract unique genes and genes with higher ISM(%) in bc01
+bc02_ISM_Genes <- Data_ISM_predictors_nonTUSCO %>% 
+  distinct(Gene_name, sample_ISM_higher) %>%
+  dplyr::filter(sample_ISM_higher %in% c("bc02_only", "bc02_higher")) %>% 
+  pull(Gene_name)
+```
+
+```{r}
+ego_bc02_Genes <- enrichGO(
+  gene          = bc02_ISM_Genes,
+  universe = all_expressed_genes,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "SYMBOL",  # or "ENSEMBL" if using Ensembl ID
+  ont           = "ALL",      # or "BP", "MF", "CC"
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  qvalueCutoff  = 0.2,
+  readable      = TRUE
+)
+
+head(ego_bc02_Genes)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# Visualization using a barplot 
+plot_bc02 <- dotplot(ego_bc02_Genes, showCategory=10)
+plot_bc02 + labs(title = "GO term enrichment analysis for genes\nwith increased ISM, unique or with higher ISM(&) in the control sample")
+```
+
+#### \* CompareCluster
+
+```{r}
+groupStress_Control <- list(stress = bc01_ISM_Genes, control = bc02_ISM_Genes)
+
+ego_stress_control <- compareCluster(geneClusters = groupStress_Control,
+                     fun = "enrichGO",
+                     OrgDb = org.Hs.eg.db,
+                     pvalueCutoff = 0.05,
+                     qvalueCutoff = 0.2,
+                     keyType  = "SYMBOL",
+                     ont = "ALL", 
+                     pAdjustMethod = "BH",
+                     universe = all_expressed_genes)
+
+head(ego_stress_control)
+```
+
+```{r}
+#| fig-width: 5
+#| fig-height: 8
+#| fig-align: center
+#| out-width: 100%
+
+# Visualization using a dotplot 
+plot_compareGO <- dotplot(ego_stress_control, showCategory=10)
+plot_compareGO + labs(title = "GO term enrichment analysis for genes\nwith increased ISM, - unique or higher ISM(%)")
+```
+
+### g - focus on neoantigens
+
+```{r}
+# import list
+neoantigens <- read.delim("../../../00_raw_data/neoantigens_list.txt", 
+                          sep = "\t")
+neoantigens_list <- neoantigens[[1]]
+
+Data_ISM_predictors_nonTUSCO_neoantigens <- Data_ISM_predictors_nonTUSCO %>%
+  filter(Gene_name %in% neoantigens_list)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plotting FSM and ISM isoform expression for 3 selected genes - no log2 transfo
+Neoantigens_ISMobs <- ggplot(Data_ISM_predictors_nonTUSCO_neoantigens) +
+  geom_col(mapping = aes(x = sample, 
+                         y = observed_ISM * 100, 
+                         fill = sample)) +
+  facet_wrap(~Gene_name, 
+             scales = "free_y") +
+  scale_fill_manual(values = c("bc01" = "darkseagreen3", "bc02" = "palevioletred3")) +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+  theme(legend.position = "none") +
+  labs(y = "Observed ISM(%)",
+       x = "Samples",
+       title = "Observed ISM transcripts (%) for neoantigen encoding genes")
+
+Neoantigens_ISMobs
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plotting FSM and ISM isoform expression for 3 selected genes - no log2 transfo
+MajorNeoantigens_ISMobs <- ggplot(filter(Data_ISM_predictors_nonTUSCO_neoantigens, 
+                                    Gene_name %in% c("CHGA", "INS", "GAD2"))) +
+  geom_col(mapping = aes(x = sample, 
+                         y = observed_ISM * 100, 
+                         fill = sample)) +
+  facet_wrap(~Gene_name, 
+             scales = "free_y") +
+  scale_fill_manual(values = c("bc01" = "darkseagreen3", "bc02" = "palevioletred3")) +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+  theme(legend.position = "none") +
+  labs(y = "Observed ISM(%)",
+       x = "Samples",
+       title = "Observed ISM transcripts (%) for neoantigen encoding genes") +
+  theme_bw(base_size = 15) +
+  theme(legend.position = "none")
+
+MajorNeoantigens_ISMobs
+```
+
+```{r}
+# check if the 3 major neoantigen encoding genes are in the list of genes with increased ISM(%)
+"INS" %in% c(bc02_ISM_Genes, bc02_ISM_UniqGenes, bc01_ISM_Genes, bc01_ISM_UniqGenes)
+
+"CHGA" %in% c(bc02_ISM_Genes, bc02_ISM_UniqGenes, bc01_ISM_Genes, bc01_ISM_UniqGenes)
+
+"GAD2" %in% c(bc02_ISM_Genes, bc02_ISM_UniqGenes, bc01_ISM_Genes, bc01_ISM_UniqGenes)
+```

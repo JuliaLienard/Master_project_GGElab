@@ -1,0 +1,446 @@
+---
+title: "02b_TUSCO_ISMperc_Model"
+author: "Julia Lienard"
+date: 2025-04-30
+date-modified: last-modified
+format: pdf
+editor: visual
+---
+
+The data from kinnex long read sequencing (MAS-ISO seq method) of the 2 samples of human pancreatic beta cell (endoC-BetaH1) provided by Lorenzo Pasquali's lab, were processed with the isoseq pipeline until isoseq cluster2 (<https://isoseq.how/getting-started.html>). Mapping of the reads were done against the human reference genome GRCh38 (Homo_sapiens.GRCh38.109.gtf \# Ensembl).
+
+SqantiQC was run and the classification output files generated are used here in combination with the list of TUSCO (Transcriptome Universal Single-isoform COntrol) genes specific of the pancreas tissue and conserved in all tissu (provided by Tian) to estimate RNA degradation in the beta cell samples. Indeed those genes have been selected because of the absence of alternative splicing, which means that incomplete-splice_match (ISM) could be considered as degradation, offering the possibility to distinguish the level of technical- (degradation) from biological noise (transcription divergency) in other genes.
+
+The list of TUSCO genes (obtained as gtf and csv files from Tian) is extracted using bash as follow:
+
+``` bash
+# check expected number of genes in the gtf file
+cat bugsi_human.gtf | awk -F "\t" '{print $3}' | grep "gene" | wc -l # 52
+
+# Extract the list of genes
+awk -F 'gene_name "' '{print $2}' bugsi_human.gtf | \
+awk -F '"' '{print $1}' | uniq > bugsi_genes_list.tx
+```
+
+# Import library
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+```
+
+# Import data
+
+```{r}
+# loading output from Sqanti-QC (GRCh38 ref genome used for mapping)
+bc01_class <- read_delim("../../../00_raw_data/SqantiQC/bc01_classification.txt" , 
+                         delim = "\t", 
+                         escape_double = FALSE, trim_ws = TRUE)
+
+bc02_class <- read_delim("../../../00_raw_data/SqantiQC/bc02_classification.txt", 
+                         delim = "\t", 
+                         escape_double = FALSE, trim_ws = TRUE)
+
+
+## import human genome annotation file Ensembl
+human_GRCh38.109_gtf <- 
+  read_delim("../../../00_raw_data/Human_GRCh38.109.gtf/Homo_sapiens.GRCh38.109.gtf", 
+                                   delim = "\t", escape_double = FALSE, 
+                                   col_names = FALSE, trim_ws = TRUE, skip = 5)
+```
+
+# A) distribution of ISM proportion for each gene
+
+First, the percentage of ISM for each annotated gene is calculated for the two Kinnex samples (proportion of reads categorized as "incomplete-splice_match" by SqantiQC among all isoforms for the same gene). Of note, for FSM and ISM isoforms, an associated_transcript can be found in the classification file, but for all structural category of the isoforms, only "novel" in associated_transcript is found.
+
+```{r}
+# Aggregate FL_count by gene, structural_category
+library(stringr)
+bc01_class_filt <- bc01_class %>%
+  filter(RTS_stage == FALSE & !str_starts(associated_gene, "novel"))
+
+bc02_class_filt <- bc02_class %>%
+  filter(RTS_stage == FALSE & !str_starts(associated_gene, "novel"))
+
+
+bc01_all_str_FL_gene <- bc01_class_filt %>%
+  group_by(associated_gene, structural_category) %>%
+  summarise(FL_sum = sum(FL, na.rm = TRUE), .groups = 'drop') # remove/ignore NA values when summing
+
+bc02_all_str_FL_gene <- bc02_class_filt %>%
+  group_by(associated_gene, structural_category) %>%
+  summarise(FL_sum = sum(FL, na.rm = TRUE), .groups = 'drop')
+
+# identify each dataframe by a column sample
+bc01_all_str_FL_gene$sample <- "bc01"
+bc02_all_str_FL_gene$sample <- "bc02"
+
+# merge dataframe
+allbc_all_str_FL_gene <- bind_rows(bc01_all_str_FL_gene, bc02_all_str_FL_gene )
+
+# pivot wider to be able to calculate the percentage of the structural category
+allbc_all_str_FL_gene_wide <- 
+  pivot_wider(allbc_all_str_FL_gene,
+              names_from = structural_category,
+              values_from = FL_sum,
+              values_fill = list(FL_sum = 0) ) # replace NA values by zero)
+
+# Rename structural categories
+allbc_all_str_FL_gene_wide <- allbc_all_str_FL_gene_wide %>%
+  rename(FSM = `full-splice_match`,
+         ISM = `incomplete-splice_match`,
+         NIC = novel_in_catalog,
+         NNC = novel_not_in_catalog)
+
+# Calculate TOT FL_count per gene
+allbc_all_str_FL_gene_wide <- allbc_all_str_FL_gene_wide %>%
+  mutate(FL_tot = rowSums(across(FSM:NNC)))
+
+# Calculate proportion of ISM per gene
+allbc_all_str_FL_gene_wide <- allbc_all_str_FL_gene_wide %>%
+  mutate(ISM_perc = ISM * 100 / FL_tot) %>%
+  rename(Gene_name = associated_gene)
+```
+
+# B) Collect parameters for correlation with ISM(%)
+
+Here, we look at weather the occurrence of ISM transcripts can correlate with one or several parameters such as length of the gene or transcript, number of exons or GC content. By doing so, if there is a correlation, looking at other genes than BUGSI to calculate an expected ISM (%) based on a chosen parameter(s) could indicate elevated observed ISM transcripts, potentially from biological noise (transcription divergency) instead of technical noise (degradation).
+
+## - Format the gtf file to split column 9
+
+```{r}
+# Extract gene coding for proteins from the corresponding gtf human Ensembl annotation file
+
+# reformat the original gtf file
+human_GRCh38.109_gtf_format <- human_GRCh38.109_gtf %>%
+  rename(chr = X1, annot_source = X2, feature = X3, start = X4, 
+         end = X5, score = X6, strand = X7, frame = X8, description = X9) %>%
+  mutate(Gene_name = str_extract(description, "gene_name [^;]+") %>% 
+           # [^;]+ one of more (+) characters not ; 
+           # here extract what is after "gene_name " until the next ;
+           str_remove("gene_name "),
+         gene_biotype = str_extract(description, "gene_biotype [^;]+") %>% 
+           str_remove("gene_biotype "),
+         gene_id = str_extract(description, "gene_id [^gene]+") %>% 
+           str_remove("gene_id "),
+         gene_version = str_extract(description, "gene_version [^;]+") %>% 
+           str_remove("gene_version "),
+         transcript_id = str_extract(description, "transcript_id [^;]+") %>% 
+           str_remove("transcript_id "),
+         transcript_name = str_extract(description, "transcript_name [^;]+") %>% 
+           str_remove("transcript_name")) %>%
+  select(-description) %>%
+  mutate(Gene_name = str_remove_all(Gene_name, '["]'),
+         gene_biotype = str_remove_all(gene_biotype, '["]'),
+         gene_id = str_remove_all(gene_id, '[";]'),
+         gene_version = str_remove_all(gene_version, '["]'),
+         transcript_id = str_remove_all(transcript_id, '["]'),
+         transcript_name = str_remove_all(transcript_name, '["]'))
+```
+
+## - Filter formatted gtf to keep protein coding genes
+
+```{r}
+# Filter the gtf_format for keeping only protein-encoding genes
+human_GRCh38.109_gtf_filtPROTEIN <- human_GRCh38.109_gtf_format %>% 
+  filter(feature == "gene" & gene_biotype == "protein_coding") %>%
+  mutate(gene_length = as.numeric(end) - as.numeric(start) + 1) %>% 
+  # Start positions are 1-based, calculate gene length with start and end sites
+  group_by(Gene_name) %>% filter(gene_version == max(gene_version)) %>% 
+  # keep latest gene version
+  ungroup() %>% filter(!is.na(Gene_name)) # removing gene with missing name
+
+# Checking duplicates gene names
+human_GRCh38.109_gtf_filtPROTEIN_duplicate <- human_GRCh38.109_gtf_filtPROTEIN %>%
+  group_by(Gene_name) %>%
+  mutate(dup_flag = n() > 1) %>%
+  ungroup() %>%
+  filter(dup_flag == "TRUE" & !is.na(Gene_name)) # no duplicated genes found!
+
+List_selected_genes_gtf <- as.list(human_GRCh38.109_gtf_filtPROTEIN$Gene_name)
+
+print(paste0(nrow(human_GRCh38.109_gtf_filtPROTEIN), 
+             " non duplicated genes encoding a protein in the annotation file")) 
+```
+
+```{r}
+head(human_GRCh38.109_gtf_filtPROTEIN)
+```
+
+## - Nb of exons
+
+### \* max number in gtf
+
+```{r}
+# Calculate the number of exons per transcript_id for each gene
+human_GRCh38.109_gtf_exon <- human_GRCh38.109_gtf_format %>%
+  filter(feature == "exon" & 
+           (Gene_name %in% List_selected_genes_gtf) & 
+           gene_biotype == "protein_coding") %>%
+  mutate(exon = 1) %>%
+  group_by(transcript_id, feature, chr, Gene_name) %>%
+  summarise(Nb_exon = sum(exon), .groups = 'drop')
+
+# Select the highest number of exons found
+human_GRCh38.109_gtf_exon <- human_GRCh38.109_gtf_exon %>%
+  group_by(Gene_name) %>%
+  filter(Nb_exon == max(Nb_exon)) %>% # selecting maximum of exons annotated
+  ungroup %>%
+  distinct(Gene_name, Nb_exon, chr) %>%
+  rename(max_exon = Nb_exon)
+
+# check duplication
+human_GRCh38.109_gtf_exon_DUP <- human_GRCh38.109_gtf_exon %>%
+  group_by(Gene_name) %>%
+  mutate(dup_flag = n() > 1) %>%
+  ungroup()  
+# one gene (PRODH) found duplicated by duplication of the chromosome 
+# (extra: KI270734.1) => it is removed
+human_GRCh38.109_gtf_exon <- human_GRCh38.109_gtf_exon %>%
+  filter(chr != "KI270734.1")
+
+print(paste0(nrow(human_GRCh38.109_gtf_exon), 
+             " genes encoding a protein with info about number of exons"))
+```
+
+```{r}
+# merge MaxExon with allbc_all_str_FL_gene_wide
+allbc_Iso_ExonMax <- 
+  merge(allbc_all_str_FL_gene_wide, human_GRCh38.109_gtf_exon, 
+        by = "Gene_name")
+```
+
+### \* max number exons in classification file per sample
+
+```{r}
+bc01_class_filt <- bc01_class_filt %>% mutate(sample = "bc01")
+bc02_class_filt <- bc02_class_filt %>% mutate(sample = "bc02")
+
+bc_MaxExon <- bind_rows(bc01_class_filt,bc02_class_filt) %>%
+  filter(!is.na(exons)) %>%
+  group_by(associated_gene, sample) %>%
+  mutate(MaxExonClass = max(exons)) %>% ungroup() %>%
+  select(associated_gene, sample, MaxExonClass) %>%
+  distinct(associated_gene, sample, MaxExonClass) %>%
+  rename(Gene_name = associated_gene)
+
+# merge with allbc_Iso_ExonMax
+allbc_Iso_ExonMax2 <- merge(allbc_Iso_ExonMax, bc_MaxExon)
+```
+
+### \* weighted (by FL counts) average number of exons per sample
+
+```{r}
+bc01_AvExon <- bc01_class_filt %>%
+  filter(!is.na(exons)) %>%
+  mutate(ExonByFL = exons * FL) %>%
+  group_by(associated_gene) %>%
+  summarise(
+    FL_tot_gene = sum(FL, na.rm = TRUE),
+    Sum_ExonWeighted = sum(ExonByFL, na.rm = TRUE),
+    weighted_AvExon = round(Sum_ExonWeighted / FL_tot_gene, 1),
+    .groups = "drop"
+  ) %>%
+  mutate(sample = "bc01")
+
+bc02_AvExon <- bc02_class_filt %>%
+  filter(!is.na(exons)) %>%
+  mutate(ExonByFL = exons * FL) %>%
+  group_by(associated_gene) %>%
+  summarise(
+    FL_tot_gene = sum(FL, na.rm = TRUE),
+    Sum_ExonWeighted = sum(ExonByFL, na.rm = TRUE),
+    weighted_AvExon = round(Sum_ExonWeighted / FL_tot_gene, 1),
+    .groups = "drop"
+  ) %>%
+  mutate(sample = "bc02")
+
+bc_AvExon <- bind_rows(bc01_AvExon,bc02_AvExon) %>%
+  rename(Gene_name = associated_gene) %>%
+  select(Gene_name, FL_tot_gene, weighted_AvExon, sample)
+
+# merge MaxExon with allbc_all_str_FL_gene_wide
+allbc_Iso_ExonMax_AvExon <- merge(allbc_Iso_ExonMax2, bc_AvExon)
+```
+
+## - Ref transcript length
+
+### \* average length based on SqQC class file
+
+```{r}
+bc_class_Avref_length <- bind_rows(bc01_class_filt, bc02_class_filt) %>% 
+  # merge both sample table to capture all ref transcripts
+  filter(!is.na(associated_gene) & !is.na(ref_length)) %>%
+  select(associated_gene, ref_length, associated_transcript, sample) %>% 
+  # reduce nb of variables
+  group_by(associated_gene, sample) %>% # group per gene
+  summarise(av_ref_length = round(mean(ref_length),0)) %>% 
+  #create a new variable to calculate average transcript length
+  ungroup() %>%
+  rename(Gene_name = associated_gene)
+
+# merge MaxExon with allbc_Iso_ExonMax_AvExon
+allbc_Iso_ExonMax_AvExon_refT <- 
+  merge(allbc_Iso_ExonMax_AvExon, bc_class_Avref_length)
+```
+
+### \* weighted average length per sample
+
+```{r}
+bc_class_WeightedAvref_length <- 
+  bind_rows(bc01_class_filt, bc02_class_filt) %>% 
+  # merge both sample table to capture all ref transcripts
+  filter(!is.na(associated_gene) & !is.na(ref_length)) %>%
+  select(associated_gene, ref_length, associated_transcript, sample, FL) %>% 
+  # reduce nb of variables
+  mutate(LengthByFL = ref_length * FL) %>%
+  group_by(associated_gene, sample) %>%
+  summarise(
+    FL_tot_gene = sum(FL, na.rm = TRUE),
+    Sum_LengthWeighted = sum(LengthByFL, na.rm = TRUE),
+    weighted_AvRefLength = round(Sum_LengthWeighted / FL_tot_gene, 0),
+    .groups = "drop"
+  ) %>% 
+  select(associated_gene, sample,weighted_AvRefLength) %>%
+  rename(Gene_name = associated_gene)
+
+# merge MaxExon with allbc_Iso_ExonMax_AvExon_refT
+allbc_Iso_ExonMax_AvExon_refT2 <- 
+  merge(allbc_Iso_ExonMax_AvExon_refT, bc_class_WeightedAvref_length)
+```
+
+## - Introns length
+
+### \* Total
+
+```{r}
+# Calculate the full span of transcript including introns using the gtf file
+human_GRCh38.109_gtf_transLength <- human_GRCh38.109_gtf_format %>%
+  filter(feature == "transcript" & gene_biotype == "protein_coding" 
+         & (Gene_name %in% List_selected_genes_gtf)) %>%
+  group_by(Gene_name, transcript_id) %>%
+  filter(gene_version == max(gene_version)) %>% 
+  # select the most recent version of the gene
+  ungroup() %>%
+  mutate(Trans_length = end - start + 1) %>%
+  group_by(Gene_name) %>%
+  mutate(Trans_length = max(Trans_length)) %>%
+  ungroup() %>%
+  select(Gene_name, Trans_length) %>%
+  distinct(Gene_name, Trans_length)
+
+allbc_Iso_ExonMax_AvExon_refT2_transLength <- 
+  merge(human_GRCh38.109_gtf_transLength, allbc_Iso_ExonMax_AvExon_refT2)
+
+allbc_Iso_ExonMax_AvExon_refT2_IntronsLength <- 
+  allbc_Iso_ExonMax_AvExon_refT2_transLength %>% 
+  mutate(Tot_intron = Trans_length - av_ref_length) %>% 
+  # av_ref_length based on SqQC class file (average of all ref_length per gene)
+  mutate(Weighted_tot_intron = Trans_length - weighted_AvRefLength)
+```
+
+### \* Av Intron size
+
+```{r}
+allbc_Iso_ExonMax_AvExon_refT2_IntronsLength <- 
+  allbc_Iso_ExonMax_AvExon_refT2_IntronsLength %>% 
+  mutate(Av_intron_length = round(Weighted_tot_intron / (MaxExonClass-1),0)) 
+# For genes where the nb of exon = 1, they need to be filtered out when using the Av_intron_length parameter later for plotting or modelling
+```
+
+## - GC (%) isoforms
+
+GC content influence on the RNA degradation is unclear from the literature. There are studies indicating that GC-rich transcripts can be protected or more sensitive to degradation or not correlated.
+
+1.  **Rabani, M., Levin, J. Z., Fan, L., et al. (2011). Metabolic labeling of RNA uncovers principles of RNA production and degradation dynamics in mammalian cells.** *Nature Biotechnology, 29(5), 436–442.* <https://www.nature.com/articles/nbt.1861>
+
+    -   This study found that transcripts with higher GC content and longer CDS/3′UTRs degrade faster in mouse cells.
+
+2.  **Courel, M., Clément, Y., Bossevain, C., et al. (2019). GC content shapes mRNA storage and decay in human cells.** *eLife, 8, e49708.* <https://elifesciences.org/articles/49708>
+
+    -   This paper demonstrates that, in human cells, GC-rich mRNAs are more stable and efficiently translated, while AU-rich mRNAs are stored in P-bodies and decay more slowly.
+
+3.  **Tani, H., Mizutani, R., Salam, K. A., et al. (2012). Genome-wide determination of RNA stability reveals hundreds of short-lived noncoding transcripts in mammals.** *Genome Research, 22(5), 947–956.* <https://genome.cshlp.org/content/22/5/947>
+
+    -   This research provides additional data on transcript stability and sequence features influencing degradation.
+
+4.  Kudla et al. ("High Guanine and Cytosine Content Increases mRNA Levels in Mammalian Cells". *Plos Biology*. <https://journals.plos.org/plosbiology/article?id=10.1371%2Fjournal.pbio.0040180>
+
+    -   found that **GC-rich transcripts exhibit higher steady-state mRNA levels** due to enhanced transcription or mRNA processing efficiency, but **mRNA degradation rates were not correlated with GC content** in their experiments
+
+Isoforms after isoseq collapse are output as a fasta document with isoform_id (PBXX.XX) and the DNA sequence. The collapsed_bc01.fasta and collapsed_bc02.fasta are used together with the script "Fasta_GCpercCalc.py" to calculate the GC(%) of each sequence, which is output by the python script as a table containing: \`isoform_id	Seq_GC_perc\`.
+
+The output GC(%) table is merged here with bc01\_ or bc02_class to link each collapsed isoform with the GC(%), which can be used to calculate for each gene av average GC content for the corresponding transcripts. (Of note, i have checked a few sequences manually using bash and the GC(%) obtained with the python script was correct).
+
+```{r}
+# import GC table for bc01 and bc02
+bc01_GC <- 
+  read_delim("../../../analysis/03_ISMperc_prediction/02a_Fasta_GCpercCalc/bc01_sequences_GC.txt", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+bc02_GC <- 
+  read_delim("../../../analysis/03_ISMperc_prediction/02a_Fasta_GCpercCalc/bc02_sequences_GC.txt", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+# rename isoform ID column to fit the sample classification file from SqantiQC
+bc01_GC <- bc01_GC %>%
+  dplyr::rename(isoform = isoform_id)
+
+bc02_GC <- bc02_GC %>%
+  dplyr::rename(isoform = isoform_id)
+
+# merge with corresponding classification file from SqantiQC
+bc01_GC_class <- inner_join(bc01_GC, bc01_class_filt, by = "isoform")
+bc02_GC_class <- inner_join(bc02_GC, bc02_class_filt, by = "isoform")
+```
+
+```{r}
+# calculate average transcript GC content for each gene, wighted by FL read counts
+bc01_GC_class <- bc01_GC_class %>%
+  mutate(GCByFL = Seq_GC_perc * FL) %>%
+  group_by(associated_gene) %>%
+  summarise(
+    FL_tot_gene = sum(FL, na.rm = TRUE),
+    Sum_GCWeighted = sum(GCByFL, na.rm = TRUE),
+    weighted_AvGC = round(Sum_GCWeighted / FL_tot_gene, 1),
+    .groups = "drop"
+  ) %>%
+  mutate(sample = "bc01")
+
+bc02_GC_class <- bc02_GC_class %>%
+  mutate(GCByFL = Seq_GC_perc * FL) %>%
+  group_by(associated_gene) %>%
+  summarise(
+    FL_tot_gene = sum(FL, na.rm = TRUE),
+    Sum_GCWeighted = sum(GCByFL, na.rm = TRUE),
+    weighted_AvGC = round(Sum_GCWeighted / FL_tot_gene, 1),
+    .groups = "drop"
+  ) %>%
+  mutate(sample = "bc02")
+
+bc_AvGC <- bind_rows(bc01_GC_class,bc02_GC_class) %>%
+  rename(Gene_name = associated_gene)
+
+# merge MaxExon with allbc_all_str_FL_gene_wide
+allbc_Iso_ExonMax_AvExon_refT2_IntronsLength_GC <- 
+  merge(allbc_Iso_ExonMax_AvExon_refT2_IntronsLength, bc_AvGC)
+```
+
+## - Ratio Exon/intron length
+
+```{r}
+allbc_Iso_ExonMax_AvExon_refT2_IntronsLength_GC <- allbc_Iso_ExonMax_AvExon_refT2_IntronsLength_GC %>%
+  mutate(Intron_Exon_length_ratio = 
+           round((Weighted_tot_intron / weighted_AvRefLength), 2))
+```
+
+## - Export data frame
+
+```{r}
+write.csv(allbc_Iso_ExonMax_AvExon_refT2_IntronsLength_GC, "../../../analysis/03_ISMperc_prediction/02b_TUSCOpancreas_ISM_Dataprep/Data_format_ISM_model.csv", 
+          row.names = FALSE)
+```

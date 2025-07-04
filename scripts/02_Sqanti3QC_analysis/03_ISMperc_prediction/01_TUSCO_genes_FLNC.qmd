@@ -1,0 +1,554 @@
+---
+title: "Use of TUSCO genes for estimation of RNA degradation"
+author: "Julia Lienard"
+date: 2025-06-10
+date-modified: last-modified
+format: pdf
+editor: visual
+---
+
+The data from kinnex long read sequencing (MAS-ISO seq method) of the 2 samples of human pancreatic beta cell (endoC-BetaH1) provided by Lorenzo Pasquali's lab, were processed with the isoseq pipeline until isoseq cluster2 (<https://isoseq.how/getting-started.html>). Mapping of the reads were done against the human reference genome GRCh38 (Homo_sapiens.GRCh38.109.gtf \# Ensembl).
+
+SqantiQC was run and the classification output files generated are used here in combination with the list of tusco genes (provided by Tian) to estimate RNA degradation in the beta cell samples. Indeed those genes have been selected because of the absence of alternative splicing, which offers the possibility to estimate the level of isoform technical noise.
+
+The list of tusco genes (obtained as a gtf file from Tian) is extracted using bash as follow:
+
+``` bash
+# check expected number of genes in the gtf file
+cat bugsi_human.gtf | awk -F "\t" '{print $3}' | grep "gene" | wc -l # 52
+
+# Extract the list of genes
+awk -F 'gene_name "' '{print $2}' bugsi_human.gtf | awk -F '"' '{print $1}' |\
+uniq > bugsi_genes_list.txt
+```
+
+2025-05-27: Tian provided me a longer list of genes specific of the pancreas. The name BUGSI has been changed to TUSCO genes for (Transcriptome Universal Single-isoform COntrol).
+
+``` bash
+# Get the list of TUSCO genes using bash:
+cat tusco_human_pancreas.tsv | grep -v "#" | awk -F "\t" '{print$3}' > tusco_human_pancreas_list.txt
+```
+
+# Import library
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+```
+
+# Import data
+
+```{r}
+# loading output from Sqanti-QC (GRCh38 ref genome used for mapping) merged with correct FL counts
+# bc01_class_FLNC.txt
+bc01_class <- 
+  read_delim("../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc01_class_FLNC.txt" , 
+                         delim = "\t", 
+                         escape_double = FALSE, 
+                         trim_ws = TRUE)
+
+# bc02_class_FLNC.txt
+bc02_class <- 
+  read_delim("../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc02_class_FLNC.txt" , 
+             delim = "\t", 
+             escape_double = FALSE, 
+             trim_ws = TRUE)
+
+# loading the list of BUGSI genes
+bugsi_genes_list <- 
+  read_csv("../../../00_raw_data/TUSCO/bugsi_genes_list.txt", 
+           col_names = FALSE)
+
+# imported BUGSI list transformed into a list in R:
+bugsi_genes_list <- as.list(bugsi_genes_list[[1]])
+
+# loading the list of TUSCO genes and transform into a list
+tusco_genes_list <- 
+  read_csv("../../../00_raw_data/TUSCO/tusco_human_pancreas_list.txt")
+tusco_genes_list <- as.list(tusco_genes_list[[1]])
+```
+
+# 1) TUSCO genes
+
+## a - Filter tusco genes from the classification files and remove RT switching
+
+```{r}
+bc01_tusco_class <- 
+  bc01_class %>% filter(associated_gene %in% tusco_genes_list & RTS_stage == FALSE)
+
+bc02_tusco_class <- 
+  bc02_class %>% filter(associated_gene %in% tusco_genes_list & RTS_stage == FALSE)
+
+# extract TUSCO genes found in each sample:
+bc01_tusco_list <- bc01_tusco_class %>% 
+  select(associated_gene) %>% 
+  distinct(associated_gene) %>%
+  pull(associated_gene)
+
+bc02_tusco_list <- bc02_tusco_class %>% 
+  select(associated_gene) %>% 
+  distinct(associated_gene) %>% 
+  pull(associated_gene)
+
+bc_tusco_Commonlist <- intersect(bc01_tusco_list, bc02_tusco_list)
+
+print(paste0(length(bc_tusco_Commonlist), " TUSCO genes found in both samples"))
+```
+
+## b- Proportion of structural categories for all tusco genes
+
+```{r}
+# Aggregate FL_count by gene, structural_category, sample 
+bc01count_tusco_str_FL <- bc01_tusco_class %>%
+  group_by(structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+bc01count_tusco_str_FL <- bc01count_tusco_str_FL %>%
+  mutate(struct_perc = round(FL_sum * 100 / sum(FL_sum), 1))
+
+# Aggregate FL_count by gene, structural_category, sample 
+bc02count_tusco_str_FL <- bc02_tusco_class %>%
+  group_by(structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+bc02count_tusco_str_FL <- bc02count_tusco_str_FL %>%
+  mutate(struct_perc = round(FL_sum * 100 / sum(FL_sum), 1))
+
+
+bc01count_tusco_str_FL$sample <- "bc01"
+bc02count_tusco_str_FL$sample <- "bc02"
+
+# Merge
+allbccount_tusco_str_FL <- 
+  bind_rows(bc01count_tusco_str_FL, bc02count_tusco_str_FL)
+```
+
+```{r}
+# plot
+library(ggplot2)
+
+# reorder structural_category for better plotting
+allbccount_tusco_str_FL$structural_category <- 
+  factor(allbccount_tusco_str_FL$structural_category, 
+         levels = c("full-splice_match", 
+                    "incomplete-splice_match", 
+                    "genic", 
+                    "novel_in_catalog", 
+                    "novel_not_in_catalog"))
+
+# Get the cumulative sum of the percentage for plotting (DOES NOT WORK)
+allbccount_tusco_str_FL <- allbccount_tusco_str_FL %>%
+  group_by(sample) %>%
+  mutate(label_y = cumsum(struct_perc) - (struct_perc / 2))
+
+tusco_strut_cat <- ggplot(allbccount_tusco_str_FL, 
+                          aes(x = sample,
+                              y = struct_perc,
+                              fill = structural_category)) +
+  geom_col(width = 0.4, position = "dodge") +
+  #geom_text(aes(y = label_y, label = struct_perc), vjust = 1.5, colour = "white") + 
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                               "incomplete-splice_match" = "#FC8D59", 
+                               "novel_in_catalog" = "#78C679", 
+                               "novel_not_in_catalog" = "#EE6A50", 
+                               "genic" = "#969696")) + 
+  labs(title = paste("Total isoforms structural categories among TUSCO selected genes (n =", length(bc_tusco_Commonlist), ")"), 
+       x = "Pancreatic beta cells", 
+       y = "Proportion of struct. categories in reads (%)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+  theme(axis.title = element_text(size = 13), axis.text = element_text(size = 10))
+
+tusco_strut_cat
+```
+
+## c- distribution of ISM proportion for each gene
+
+```{r}
+# Aggregate FL_count by gene, structural_category
+bc01count_tusco_str_FL_gene <- bc01_tusco_class %>%
+  group_by(associated_gene, structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+# Aggregate FL_count by gene, structural_category
+bc02count_tusco_str_FL_gene <- bc02_tusco_class %>%
+  group_by(associated_gene, structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+# identify each dataframe by a column sample
+bc01count_tusco_str_FL_gene$sample <- "bc01"
+bc02count_tusco_str_FL_gene$sample <- "bc02"
+
+# merge dataframe
+allbccount_tusco_str_FL_gene <- 
+  bind_rows(bc01count_tusco_str_FL_gene, bc02count_tusco_str_FL_gene )
+```
+
+```{r}
+# pivot wider to be able to calculate the percentage of the structural category
+allbccount_tusco_str_FL_gene_wide <- 
+  pivot_wider(allbccount_tusco_str_FL_gene,
+              names_from = structural_category,
+              values_from = FL_sum,
+              values_fill = list(FL_sum = 0) ) # replace NA values by zero)
+
+# Calculate TOT FL_count per gene
+allbccount_tusco_str_FL_gene_wide <- 
+  allbccount_tusco_str_FL_gene_wide %>%
+  mutate(FL_tot = rowSums(across(`full-splice_match`:`novel_not_in_catalog`)))
+
+# Calculate proportion of ISM per gene
+allbccount_tusco_str_FL_gene_wide <- 
+  allbccount_tusco_str_FL_gene_wide %>%
+  mutate(ISM_perc = `incomplete-splice_match` * 100 / FL_tot)
+```
+
+```{r}
+# plot the distribution of percentage ISM for each gene for all tusco genes
+ISM_perc_tusco <- ggplot(allbccount_tusco_str_FL_gene_wide) +
+  geom_density(mapping = aes(x=ISM_perc, color = sample)) 
+
+ISM_perc_tusco
+```
+
+```{r}
+ISM_perc_tuscoV2 <- ggplot(allbccount_tusco_str_FL_gene_wide) +
+  geom_histogram(mapping = aes(x=ISM_perc, fill = sample), binwidth = 0.9) +
+  facet_wrap(~sample,
+             labeller = labeller(sample = c("bc01" = "STRESS",
+                                 "bc02" = "CONTROL"))) +
+  labs(title = "Proportion of ISM isoforms for each TUSCO selected gene",
+       y= "Gene counts", x = "ISM per gene (% of isoforms)") +
+  theme_bw(base_size = 15) +
+  theme(legend.position = "none")
+
+ISM_perc_tuscoV2
+```
+
+# 2) BUGSI genes
+
+## a - Filter bugsi genes from the classification files and remove RT switching
+
+```{r}
+bc01_bugsi_class <- bc01_class %>% 
+  filter(associated_gene %in% bugsi_genes_list & RTS_stage == FALSE)
+
+# Count the number of bugsi genes detected in bc01 sample 
+bc01count_bugsi_genes <- bc01_bugsi_class %>%
+  group_by(associated_gene) %>%
+  summarize(FL_count = sum(FLNC))
+
+# nb of genes
+nrow(bc01count_bugsi_genes)
+
+bc02_bugsi_class <- bc02_class %>% 
+  filter(associated_gene %in% bugsi_genes_list & RTS_stage == FALSE)
+
+# Count the number of bugsi genes detected in bc01 sample 
+bc02count_bugsi_genes <- bc02_bugsi_class %>%
+  group_by(associated_gene) %>%
+  summarize(FL_count = sum(FLNC))
+
+# nb of genes
+nrow(bc02count_bugsi_genes)
+
+# how many bugsi_genes common between the 2 samples bc01 and bc02
+bc_bugsi_gene <- inner_join(bc01_bugsi_class, bc02_bugsi_class, 
+                            by = "associated_gene") %>% 
+  select(associated_gene) %>%
+  distinct() # 51 genes
+nrow(bc_bugsi_gene)
+```
+
+## b- Proportion of structural categories for all bugsi genes
+
+```{r}
+# Aggregate FL_count by gene, structural_category, sample 
+bc01count_bugsi_str_FL <- bc01_bugsi_class %>%
+  group_by(structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+bc01count_bugsi_str_FL <- bc01count_bugsi_str_FL %>%
+  mutate(struct_perc = round(FL_sum * 100 / sum(FL_sum), 1))
+
+
+# Aggregate FL_count by gene, structural_category, sample 
+bc02count_bugsi_str_FL <- bc02_bugsi_class %>%
+  group_by(structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+bc02count_bugsi_str_FL <- bc02count_bugsi_str_FL %>%
+  mutate(struct_perc = round(FL_sum * 100 / sum(FL_sum), 1))
+
+
+bc01count_bugsi_str_FL$sample <- "bc01"
+bc02count_bugsi_str_FL$sample <- "bc02"
+
+# Merge
+allbccount_bugsi_str_FL <- 
+  bind_rows(bc01count_bugsi_str_FL, bc02count_bugsi_str_FL)
+```
+
+```{r}
+# plot
+library(ggplot2)
+
+# reorder structural_category for better plotting
+allbccount_bugsi_str_FL$structural_category <- 
+  factor(allbccount_bugsi_str_FL$structural_category, 
+         levels = c("full-splice_match", 
+                    "incomplete-splice_match", 
+                    "genic", 
+                    "novel_in_catalog", 
+                    "novel_not_in_catalog"))
+
+# Get the cumulative sum of the percentage for plotting (DOES NOT WORK)
+allbccount_bugsi_str_FL <- allbccount_bugsi_str_FL %>%
+  group_by(sample) %>%
+  mutate(label_y = cumsum(struct_perc) - (struct_perc / 2))
+
+bugsi_strut_cat <- ggplot(allbccount_bugsi_str_FL, 
+                          aes(x = sample,
+                              y = struct_perc,
+                              fill = structural_category)) +
+  geom_col(width = 0.4, position = "dodge") +
+  #geom_text(aes(y = label_y, label = struct_perc), vjust = 1.5, colour = "white") + 
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                               "incomplete-splice_match" = "#FC8D59", 
+                               "novel_in_catalog" = "#78C679", 
+                               "novel_not_in_catalog" = "#EE6A50", 
+                               "genic" = "#969696")) + 
+  labs(title = paste("Total isoforms structural categories among BUGSI selected genes (n =", nrow(bc_bugsi_gene), ")"), 
+       x = "Pancreatic beta cells", 
+       y = "Proportion of struct. categories in reads (%)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control"))
+
+bugsi_strut_cat
+```
+
+## c- distribution of ISM proportion for each gene
+
+```{r}
+# Aggregate FL_count by gene, structural_category
+bc01count_bugsi_str_FL_gene <- bc01_bugsi_class %>%
+  group_by(associated_gene, structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+# Aggregate FL_count by gene, structural_category
+bc02count_bugsi_str_FL_gene <- bc02_bugsi_class %>%
+  group_by(associated_gene, structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+# identify each dataframe by a column sample
+bc01count_bugsi_str_FL_gene$sample <- "bc01"
+bc02count_bugsi_str_FL_gene$sample <- "bc02"
+
+# merge dataframe
+allbccount_bugsi_str_FL_gene <- 
+  bind_rows(bc01count_bugsi_str_FL_gene, bc02count_bugsi_str_FL_gene )
+```
+
+```{r}
+# pivot wider to be able to calculate the percentage of the structural category
+allbccount_bugsi_str_FL_gene_wide <- 
+  pivot_wider(allbccount_bugsi_str_FL_gene,
+              names_from = structural_category,
+              values_from = FL_sum,
+              values_fill = list(FL_sum = 0) ) # replace NA values by zero)
+
+# Calculate TOT FL_count per gene
+allbccount_bugsi_str_FL_gene_wide <- 
+  allbccount_bugsi_str_FL_gene_wide %>%
+  mutate(FL_tot = rowSums(across(`full-splice_match`:`novel_not_in_catalog`)))
+
+# Calculate proportion of ISM per gene
+allbccount_bugsi_str_FL_gene_wide <- allbccount_bugsi_str_FL_gene_wide %>%
+  mutate(ISM_perc = `incomplete-splice_match` * 100 / FL_tot)
+```
+
+```{r}
+# plot the distribution of percentage ISM for each gene for all bugsi genes
+ISM_perc_bugsi <- ggplot(allbccount_bugsi_str_FL_gene_wide) +
+  geom_density(mapping = aes(x=ISM_perc, color = sample)) 
+
+ISM_perc_bugsi
+```
+
+```{r}
+ISM_perc_bugsiV2 <- ggplot(allbccount_bugsi_str_FL_gene_wide) +
+  geom_histogram(mapping = aes(x=ISM_perc, fill = sample)) +
+  facet_wrap(~sample,
+             labeller = labeller(sample = c("bc01" = "STRESS",
+                                 "bc02" = "CONTROL"))) +
+  labs(title = "Proportion of ISM isoforms for each BUGSI selected gene",
+       y= "Gene counts", x = "ISM per gene (% of isoforms)")+
+  theme(legend.position = "none")
+
+ISM_perc_bugsiV2
+```
+
+# 3) Proportion of structural categories for all genes
+
+## a - filter the classification files
+
+```{r}
+library(stringr)
+# filter bc01_class for keeping only the isoforms with no RT switching 
+#and the annotated genes :
+bc01_class_filt <- bc01_class %>% 
+  filter(RTS_stage == FALSE & !str_starts(associated_gene, "novelGene_"))
+
+bc02_class_filt <- bc02_class %>% 
+  filter(RTS_stage == FALSE & !str_starts(associated_gene, "novelGene_"))
+```
+
+```{r}
+# Aggregate FL_count by gene, structural_category, sample 
+bc01count_str_FL <- bc01_class %>%
+  group_by(structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+bc01count_str_FL <- bc01count_str_FL %>%
+  mutate(struct_perc = round(FL_sum * 100 / sum(FL_sum), 1))
+
+# Aggregate FL_count by gene, structural_category, sample 
+bc02count_str_FL <- bc02_class %>%
+  group_by(structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+bc02count_str_FL <- bc02count_str_FL %>%
+  mutate(struct_perc = round(FL_sum * 100 / sum(FL_sum), 1))
+
+
+bc01count_str_FL$sample <- "bc01"
+bc02count_str_FL$sample <- "bc02"
+
+# Merge
+allbccount_str_FL <- bind_rows(bc01count_str_FL, bc02count_str_FL)
+```
+
+```{r}
+# reorder structural_category for better plotting
+allbccount_str_FL$structural_category <- 
+  factor(allbccount_str_FL$structural_category, 
+         levels = c("full-splice_match", 
+                    "incomplete-splice_match",
+                    "novel_in_catalog", 
+                    "novel_not_in_catalog",
+                    "intergenic",
+                    "antisense",
+                    "genic", 
+                    "genic_intron",
+                    "fusion"))
+```
+
+```{r}
+# Get the cumulative sum of the percentage for plotting
+allbccount_str_FL <- allbccount_str_FL %>%
+  group_by(sample) %>%
+  mutate(label_y = cumsum(struct_perc) - (struct_perc / 2))
+
+All_strut_cat <- ggplot(allbccount_str_FL, 
+                          aes(x = sample,
+                              y = struct_perc,
+                              fill = structural_category)) +
+  geom_col(width = 0.5, position = "dodge") +
+  scale_fill_manual(values = 
+                      c("full-splice_match" = "#6BAED6",
+                        "incomplete-splice_match" = "#FC8D59",
+                        "novel_in_catalog" = "#78C679",
+                        "novel_not_in_catalog" = "#EE6A50",
+                        "genic" = "#969696",
+                        "antisense" = "#66C2A4",
+                        "fusion" = "goldenrod1",
+                        "intergenic" = "darksalmon",
+                        "genic_intron" = "#41B6C4"
+                               )) + 
+  labs(title = paste("Isoforms structural categories among all genes"), 
+       x = "Pancreatic beta cells", 
+       y = "Proportion of struct. categories in reads (%)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control"))
+
+All_strut_cat
+```
+
+## b - distribution of ISM proportion for each gene
+
+```{r}
+# Aggregate FL_count by gene, structural_category
+bc01count_str_FL_gene <- bc01_class %>%
+  group_by(associated_gene, structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+# Aggregate FL_count by gene, structural_category
+bc02count_str_FL_gene <- bc02_class %>%
+  group_by(associated_gene, structural_category) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+# identify each dataframe by a column sample
+bc01count_str_FL_gene$sample <- "bc01"
+bc02count_str_FL_gene$sample <- "bc02"
+
+# merge dataframe
+allbccount_str_FL_gene <- 
+  bind_rows(bc01count_str_FL_gene, bc02count_str_FL_gene )
+```
+
+```{r}
+# pivot wider
+allbccount_str_FL_gene_wide <- 
+  pivot_wider(allbccount_str_FL_gene,
+              names_from = structural_category,
+              values_from = FL_sum,
+              values_fill = list(FL_sum = 0) ) # replace NA values by zero)
+
+# Calculate TOT FL_count per gene
+allbccount_str_FL_gene_wide <- 
+  allbccount_str_FL_gene_wide %>%
+  mutate(FL_tot = 
+           rowSums(across(`full-splice_match`:`novel_not_in_catalog`)))
+
+# Calculate proportion of ISM per gene
+allbccount_str_FL_gene_wide <- allbccount_str_FL_gene_wide %>%
+  mutate(ISM_perc = `incomplete-splice_match` * 100 / FL_tot)
+```
+
+```{r}
+ISM_perc_bc <- ggplot(allbccount_str_FL_gene_wide) +
+  geom_density(mapping = aes(x=ISM_perc, color = sample)) +
+  scale_color_manual(
+    values = c("bc01" = "darkseagreen3", "bc02" = "palevioletred3"))
+
+ISM_perc_bc
+```
+
+```{r}
+# distinguish bugsi genes from the other
+allbccount_str_FL_gene_wide <- allbccount_str_FL_gene_wide %>%
+  mutate(bugsi = ifelse(associated_gene %in% bugsi_genes_list, "yes", "no"))
+
+ISM_perc_bcV2 <- ggplot(allbccount_str_FL_gene_wide) +
+  geom_density(mapping = aes(x=ISM_perc, fill = sample), alpha = 0.4) +
+  scale_color_manual(values = c("bc01" = "darkseagreen3", "bc02" = "palevioletred3")) + 
+  facet_wrap(~bugsi,
+             labeller = labeller(bugsi = c("yes" = "Bugsi genes",
+                                           "no" = "Other genes"))) +
+  theme(legend.position = "bottom") +
+  labs(title = "Gene distribution of the proportion of ISM among isoforms of each gene",
+       x = "ISM isoforms per gene (%)") 
+
+ISM_perc_bcV2
+```
+
+```{r}
+# distinguish bugsi genes from the other
+allbccount_str_FL_gene_wide <- allbccount_str_FL_gene_wide %>%
+  mutate(bugsi = ifelse(associated_gene %in% bugsi_genes_list, "yes", "no"))
+
+ISM_perc_bcV3 <- ggplot(allbccount_str_FL_gene_wide) +
+  geom_histogram(mapping = aes(x=ISM_perc, color = sample,linetype = bugsi)) +
+  scale_color_manual(values = c("bc01" = "darkseagreen3", "bc02" = "palevioletred3"))
+
+ISM_perc_bcV3
+```

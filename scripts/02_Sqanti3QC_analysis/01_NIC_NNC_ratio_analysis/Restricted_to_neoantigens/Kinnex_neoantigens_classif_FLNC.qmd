@@ -1,0 +1,1355 @@
+---
+title: "Kinnex data - neoantigens isoform structural characterization"
+author: "Julia Lienard"
+date: 2025-02-19
+date-modified: last-modified
+format: html
+editor: visual
+---
+
+The data from kinnex long read sequencing (MAS-ISO seq method) of the 2 samples of human pancreatic beta cell (endoC-BetaH1) provided by Lorenzo Pasquali's lab, were processed with the isoseq pipeline until isoseq cluster2. Mapping of the reads were done against the human reference genome GRCh38.
+
+SqantiQC was run and the classification output files (found here: /home/jlienard/BetaCells_kinnex/04_sqantiQC/\\
+
+02_Using_GRCh38_mapping/output) generated are used here (prior merging with correct FLNC counts using 00_Merge_SqQCclass_FLcounts.R ) to focus the analysis of genes encoding known autoantigens encoding genes during type I diabetes: list of neoantigens provided based on the literature (and editable if needed) to filter the classification files.
+
+## Import library
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+```
+
+## Loading input files
+
+```{r}
+# loading output from Sqanti-QC (GRCh38 ref genome used for mapping)
+
+# loading bc01_class_FLNC.txt (output from 00_Merge_SqQCclass_FLcounts.R)
+bc01_class <- read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc01_class_FLNC.txt" , 
+                         delim = "\t", 
+                         escape_double = FALSE, 
+                         trim_ws = TRUE)
+
+# loading bc02_class_FLNC.txt
+bc02_class <- read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc02_class_FLNC.txt" , 
+                         delim = "\t", 
+                         escape_double = FALSE, 
+                         trim_ws = TRUE)
+
+neoantigen <- read_delim(file = "../../../../00_raw_data/neoantigens_list.txt", 
+                         delim = "\t",
+                         col_names = FALSE)
+# names of the neoantigen-encoding genes should be the one used in the human reference annotation
+```
+
+## Calculation of log2(TPM+1) as a value of isoform expression
+
+normalizing the read counts (TPM calculation). It is calculated in SqantiQC as follow:
+
+> log2((FL_count/bc01_mapped_reads)\*10e6) +1)
+
+```{r}
+# sum of all FL in the classification file using R:
+bc01_tot_FL_count <- sum(bc01_class$FLNC, na.rm=T) 
+bc02_tot_FL_count <- sum(bc02_class$FLNC, na.rm=T)
+
+# FLNC counts for annotated and novel genes
+```
+
+## Filter classification file based on the list of neoantigens
+
+```{r}
+# imported list transformed into a list in R:
+neoantigen_list <- as.list(neoantigen[[1]]) 
+
+# filter bc01_class for keeping only the neoantigens and have only isoforms without RT switching artefacts:
+bc01neoantigen_class <- bc01_class %>% 
+  filter(associated_gene %in% neoantigen_list & RTS_stage == FALSE)
+
+bc02neoantigen_class <- bc02_class %>% 
+  filter(associated_gene %in% neoantigen_list & RTS_stage == FALSE)
+
+
+# adding sample origine before joining dataframes
+bc01neoantigen_class$sample <- "bc01"
+bc02neoantigen_class$sample <- "bc02"
+
+# joining
+all_neoantigen_class <- 
+  bind_rows(bc01neoantigen_class, bc02neoantigen_class)
+```
+
+### 1) Read counts
+
+```{r}
+# Step 1: Aggregate FL_count by gene and sample
+all_neoantigen_class_gp_by_FL <- all_neoantigen_class %>%
+  group_by(associated_gene, sample) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')  
+# Aggregating FL counts per gene and sample
+
+# Step 2: Calculate CPM
+all_neoantigen_class_gp_by_FL <- all_neoantigen_class_gp_by_FL %>%
+  mutate(CPM = (FL_sum / case_when(
+    sample == "bc01" ~ bc01_tot_FL_count,
+    sample == "bc02" ~ bc02_tot_FL_count)) * 1e6)
+
+# Step 3: Calculate log2(CPM + 1)
+all_neoantigen_class_gp_by_FL <- 
+  all_neoantigen_class_gp_by_FL %>%
+  mutate(logCPM = log2(CPM + 1))
+```
+
+```{r}
+head(all_neoantigen_class_gp_by_FL, 18)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot expression for isoforms no log2 transfo
+Iso_expressionCPM <- 
+  ggplot(all_neoantigen_class_gp_by_FL) +
+  geom_col(mapping = aes(x=sample, 
+                         y=CPM, 
+                         fill = sample)) +
+  scale_fill_manual(values = c("bc01" = "darkseagreen3", 
+                               "bc02" = "palevioletred3")) +
+  facet_grid(~associated_gene) +
+  labs(title = "All Isoforms expression for neoantigen-encoding genes",
+       y = "CPM", x = "Pancreatic β-cell samples") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+Iso_expressionCPM
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot expression for for isoform
+Iso_expressionlog2TPM <- ggplot(all_neoantigen_class_gp_by_FL) +
+  geom_col(mapping = aes(x=sample, y=logCPM, fill = sample)) +
+  scale_fill_manual(values = c("bc01" = "darkseagreen3", 
+                               "bc02" = "palevioletred3")) +
+  facet_grid(~associated_gene) +
+  labs(title = "All Isoforms expression for neoantigen-encoding genes",
+       y = "log2(CPM+1)", x = "Pancreatic β-cell samples") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+Iso_expressionlog2TPM
+```
+
+#### - percentage of each transcript by gene
+
+```{r}
+# Calculate the percentage of each transcript by gene (use total FL counts per gene and FL counts for each transcript of the same gene)
+
+all_neoantigen_class_gp_by_FL_filt <- 
+  all_neoantigen_class_gp_by_FL %>% 
+  select(-CPM, -logCPM)
+
+all_neoantigen_class_totFLgene <- 
+  inner_join(all_neoantigen_class_gp_by_FL_filt, all_neoantigen_class, 
+             by = c("sample", "associated_gene"))
+
+all_neoantigen_class_totFLgene <- all_neoantigen_class_totFLgene %>%
+  mutate(trans_perc = FLNC * 100 / FL_sum)
+```
+
+```{r}
+#| fig-width: 7
+#| fig-height: 8
+#| fig-align: center
+#| out-width: 100%
+
+
+ggplot(data = all_neoantigen_class_totFLgene, 
+                     mapping = aes(x=sample, 
+                                   y=log(FLNC), 
+                                   color = structural_category)) +
+  geom_jitter(shape = 21) +
+  facet_wrap(~associated_gene, 
+             scale = "free_y") + 
+  labs(title = "Isoforms found for neoantigen-encoding genes",
+       y = "log(FL counts)") +
+  theme(legend.position = "bottom") +
+  scale_color_manual(values = c("full-splice_match" = "#6BAED6", 
+                                "incomplete-splice_match" = "#FC8D59", 
+                                "novel_in_catalog" = "#78C679", 
+                                "novel_not_in_catalog" = "#EE6A50", 
+                                "genic" = "#969696"))
+```
+
+```{r}
+#| fig-width: 7
+#| fig-height: 8
+#| fig-align: center
+#| out-width: 100%
+
+
+# Create a variable with for FL groups according to the counts
+all_neoantigen_class_totFLgene <- all_neoantigen_class_totFLgene %>%
+  mutate(FL_group =
+           case_when(
+    FLNC == 1 ~ "1",
+    FLNC > 1 & FL < 11 ~ "2-10",
+    FLNC > 10 & FL < 51 ~"11-50",
+    FLNC > 50 & FL < 101 ~"51-100",
+    FLNC > 100 & FL < 501 ~"101-500",
+    FLNC > 500 ~">500",
+    TRUE ~ "NA"
+  ),
+  FL_group = factor(FL_group, 
+                    levels = c("1", "2-10", "11-50", "51-100", 
+                               "101-500", ">500", "NA"))
+  )
+
+# plot FL groups
+library(ggplot2)
+library(ggpattern)  # Required for pattern aesthetics
+
+ggplot(data = all_neoantigen_class_totFLgene) +
+  geom_bar_pattern(mapping = aes(x=FL_group, 
+                                 fill = structural_category, 
+                                 pattern = sample),
+                   stat = "count",
+                   pattern_density = 0.02,
+                   pattern_spacing = 0.025) +
+  facet_wrap(~associated_gene, scales = "free_y") + 
+  labs(title = "Isoforms found for neoantigen-encoding genes",
+       y = "transcripts counts") +
+  theme(legend.position = "bottom") +
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                               "incomplete-splice_match" = "#FC8D59", 
+                               "novel_in_catalog" = "#78C679", 
+                               "novel_not_in_catalog" = "#EE6A50", 
+                               "genic" = "#969696"))  +
+  scale_pattern_manual(
+    values = c("bc01" = "none", "bc02" = "stripe"),
+    labels = c("bc01" = "Stress", "bc02" = "Control")
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.box.just = "left",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  guides(
+    fill = guide_legend(
+      override.aes = list(pattern = "none"),
+      order = 1,
+      nrow = 2
+    ),
+    pattern = guide_legend(
+      override.aes = list(fill = "white", color = "black"),
+      order = 2
+    )
+  )
+```
+
+```{r}
+#| fig-width: 7
+#| fig-height: 8
+#| fig-align: center
+#| out-width: 100%
+
+
+library(ggplot2)
+library(ggpattern)
+library(scales)  # for pseudo_log
+
+ggplot(data = all_neoantigen_class_totFLgene, 
+       aes(x = FL_group,
+           fill = structural_category,
+           pattern = sample)) +
+  geom_bar_pattern(
+    position = position_dodge2(preserve = "single"),
+    stat = "count",
+    pattern_density = 0.1,
+    pattern_spacing = 0.05,
+    pattern_key_scale_factor = 0.5
+  ) +
+  facet_wrap(~associated_gene, scales = "free_y") +
+  scale_pattern_manual(
+    values = c("bc01" = "none", "bc02" = "stripe"),
+    labels = c("bc01" = "Stress", "bc02" = "Control")
+  ) +
+  scale_fill_manual(
+    values = c(
+      "full-splice_match" = "#6BAED6", 
+      "incomplete-splice_match" = "#FC8D59", 
+      "novel_in_catalog" = "#78C679", 
+      "novel_not_in_catalog" = "#EE6A50", 
+      "genic" = "#969696"
+    ),
+    labels = c(
+      "full-splice_match" = "FSM", 
+      "incomplete-splice_match" = "ISM", 
+      "novel_in_catalog" = "NIC", 
+      "novel_not_in_catalog" = "NNC", 
+      "genic" = "Genic"
+    )
+  ) +
+  scale_y_continuous(trans = "pseudo_log", 
+                     breaks = c(1, 5, 10, 50, 100, 500, 1000)) +
+  labs(
+    title = "Isoforms Found for Neoantigen-Encoding Genes",
+    y = "Transcript Counts (Pseudo-log Scale)",
+    x = "Nb FL Reads per Transcript",
+    fill = "Structural Category",
+    pattern = "Sample"
+  ) +
+  guides(
+    fill = guide_legend(
+      override.aes = list(pattern = "none"),
+      order = 1
+    ),
+    pattern = guide_legend(
+      override.aes = list(fill = "white", color = "black"),
+      order = 2
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.box.just = "left",
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(face = "bold")
+  )
+
+```
+
+```{r}
+#| fig-width: 6
+#| fig-height: 5
+#| fig-align: center
+#| out-width: 100%
+
+
+library(ggplot2)
+library(ggpattern)
+library(scales)  # for pseudo_log
+
+ggplot(data = filter(all_neoantigen_class_totFLgene, 
+                     sample == "bc02"), 
+       aes(x = FL_group,
+           fill = structural_category,
+           pattern = sample)) +
+  geom_bar_pattern(
+    position = position_dodge2(preserve = "single"),
+    stat = "count",
+    pattern_density = 0.1,
+    pattern_spacing = 0.05,
+    pattern_key_scale_factor = 0.5
+  ) +
+  facet_wrap(~associated_gene, scales = "free_y") +
+  scale_pattern_manual(
+    values = c("bc02" = "none", "bc01" = "stripe"),
+    labels = c("bc01" = "Stress", "bc02" = "Control")
+  ) +
+  scale_fill_manual(
+    values = c(
+      "full-splice_match" = "#6BAED6", 
+      "incomplete-splice_match" = "#FC8D59", 
+      "novel_in_catalog" = "#78C679", 
+      "novel_not_in_catalog" = "#EE6A50", 
+      "genic" = "#969696"
+    ),
+    labels = c(
+      "full-splice_match" = "FSM", 
+      "incomplete-splice_match" = "ISM", 
+      "novel_in_catalog" = "NIC", 
+      "novel_not_in_catalog" = "NNC", 
+      "genic" = "Genic"
+    )
+  ) +
+  scale_y_continuous(trans = "pseudo_log", 
+                     breaks = c(1, 5, 10, 50, 100, 500, 1000)) +
+  labs(
+    title = "Isoforms Found for Neoantigen-Encoding Genes",
+    subtitle = "Control sample",
+    y = "Transcript Counts (Pseudo-log Scale)",
+    x = "Nb FL Reads per Transcript",
+    fill = "Structural Category",
+    pattern = "Sample"
+  ) +
+  guides(
+    fill = guide_legend(
+      override.aes = list(pattern = "none"),
+      order = 1,
+      nrow = 5
+    ),
+    pattern = guide_legend(
+      override.aes = list(fill = "white", color = "black"),
+      order = 2
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "right",
+    legend.box = "vertical",
+    legend.box.just = "left",
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(face = "bold")
+  )
+
+```
+
+### 2) FL and structural category: Group by gene and sample
+
+Creating a subdataframe where data are grouped by gene, `structural_category` and `sample`, before making the calculation of TPM and log2(TPM + 1).
+
+```{r}
+library(dplyr)
+
+# Step 1: Aggregate FL_count by gene, structural_category, and sample
+all_neoantigen_class_gp_by_gene <- all_neoantigen_class %>%
+  group_by(associated_gene, structural_category, sample) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), 
+            .groups = 'drop')  
+# Aggregating FL counts per gene, structural category, and sample
+
+# Step 2: Calculate TPM
+all_neoantigen_class_gp_by_gene <- all_neoantigen_class_gp_by_gene %>%
+  mutate(CPM = (FL_sum / case_when(sample == "bc01" ~ bc01_tot_FL_count,
+                                   sample == "bc02" ~ bc02_tot_FL_count)) * 1e6)
+
+# Step 3: Calculate log2(TPM + 1)
+all_neoantigen_class_gp_by_gene <- all_neoantigen_class_gp_by_gene %>%
+  mutate(logCPM = log2(CPM + 1))
+```
+
+```{r}
+head(all_neoantigen_class_gp_by_gene, 15)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot expression for FSM
+FSM_expression <- ggplot(filter(all_neoantigen_class_gp_by_gene, 
+                                structural_category == "full-splice_match")) +
+  geom_col(mapping = aes(x=sample, y=logCPM, fill = sample)) +
+  scale_fill_manual(values = c("bc01" = "darkseagreen3", 
+                               "bc02" = "palevioletred3")) +
+  facet_grid(~associated_gene) +
+  labs(title = "FSM Isoform FL_TPM normalized for neoantigen-encoding genes",
+      y = "log2(CPM+1)", x = "Pancreatic β-celll samples") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+FSM_expression
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot expression for FSM no log2 transfo
+FSM_expressionTPM <- ggplot(filter(all_neoantigen_class_gp_by_gene, 
+                                   structural_category == "full-splice_match")) +
+  geom_col(mapping = aes(x=sample, 
+                         y=CPM, 
+                         fill = sample)) +
+  scale_fill_manual(values = c("bc01" = "darkseagreen3", 
+                               "bc02" = "palevioletred3")) +
+  facet_grid(~associated_gene) +
+  labs(title = "FSM Isoform expression for neoantigen-encoding genes",
+       y = "CPM", x = "Pancreatic β-cell samples") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+FSM_expressionTPM
+
+#ggsave("neoantigen_FSM_expressionTPM.png", FSM_expressionTPM)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot expression for ISM
+ISM_expression <- ggplot(filter(all_neoantigen_class_gp_by_gene, 
+                                structural_category == "incomplete-splice_match")) +
+  geom_col(mapping = aes(x=sample, 
+                         y=logCPM, 
+                         fill = sample)) +
+  scale_fill_manual(values = c("bc01" = "darkseagreen3", "bc02" = "palevioletred3")) +
+  facet_grid(~associated_gene) +
+  labs(title = "ISM Isoform Isoform normalized read counts for neoantigen-encoding genes",
+       y = "log2(CPM+1)", x = "Pancreatic β-cell samples") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+ISM_expression
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+FSM_ISM_expression <- ggplot(filter(all_neoantigen_class_gp_by_gene, 
+                                    structural_category %in% c("full-splice_match", "incomplete-splice_match"))) +
+  geom_col(mapping = aes(x = sample , 
+                         y = logCPM, 
+                         fill = structural_category), 
+           position = position_dodge(width = 0.8)) +  # Dodge bars by sample within each structural category
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                               "incomplete-splice_match" = "#FC8D59")) +
+  facet_grid(~associated_gene) +  # Separate plots per gene
+  labs(title = "FSM and ISM Isoform normalized read counts for neoantigen-encoding genes",
+       y = "log2(CPM + 1)", x = "Pancreatic β-cell samples") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+FSM_ISM_expression
+
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# other way of plotting FSM and ISM isoform expression - no log2 transfo
+FSM_ISM_expressionv2 <- ggplot(filter(all_neoantigen_class_gp_by_gene, 
+                                    structural_category %in% c("full-splice_match", "incomplete-splice_match"))) +
+  geom_col(mapping = aes(x = sample , 
+                         y = CPM, 
+                         fill = structural_category), 
+           position = position_dodge(width = 0.8)) +  
+  # Dodge bars by sample within each structural category
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                               "incomplete-splice_match" = "#FC8D59")) +
+  facet_grid(~associated_gene) +  # Separate plots per gene
+  labs(title = "FSM and ISM Isoform normalized read counts for neoantigen-encoding genes",
+       y = "CPM", 
+       x = " Pancreatic β-celll samples") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", 
+                              "bc02" = "Control")) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, 
+                                   hjust = 1))  # Rotate x-axis labels
+
+FSM_ISM_expressionv2
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# Plotting FSM and ISM isoform FL read counts
+FSM_ISM_expressionv3 <- ggplot(filter(all_neoantigen_class_gp_by_gene, 
+                                    structural_category %in% c("full-splice_match", "incomplete-splice_match"))) +
+  geom_col(mapping = aes(x = sample , 
+                         y = FL_sum, 
+                         fill = structural_category), 
+           position = position_dodge(width = 0.8)) +  # Dodge bars by sample within each structural category
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", "incomplete-splice_match" = "#FC8D59")) +
+  facet_grid(~associated_gene) +  # Separate plots per gene
+  labs(title = "FSM and ISM Isoform FL read counts for neoantigen-encoding genes",
+       y = "FL read counts", x = " Pancreatic β-cell samples") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+FSM_ISM_expressionv3
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# other way of plotting FSM and ISM isoform expression
+FSM_ISM_expressionv4 <- ggplot(filter(all_neoantigen_class_gp_by_gene, 
+                                    structural_category %in% c("full-splice_match", "incomplete-splice_match"))) +
+  geom_col(mapping = aes(x = structural_category, 
+                         y = logCPM, 
+                         fill = sample), 
+           position = position_dodge(width = 0.8)) +  # Dodge bars by sample within each structural category
+  scale_fill_manual(values = c("bc01" = "darkseagreen3", "bc02" = "palevioletred3")) +
+  facet_grid(~associated_gene) +  # Separate plots per gene
+  labs(title = "FSM and ISM Isoform normalized read counts for neoantigen-encoding genes",
+       y = "log2(CPM + 1)", x = "Isoform structural category") +
+  scale_x_discrete(labels = c("full-splice_match" = "FSM", "incomplete-splice_match" = "ISM")) +
+  theme(legend.position = "right",
+        axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+FSM_ISM_expressionv4
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# other way of plotting FSM and ISM isoform expression - no log2 transfo
+Expression_str_categ <- ggplot(all_neoantigen_class_gp_by_gene) +
+  geom_col(mapping = aes(x = sample , y = logCPM, fill = structural_category), 
+           position = position_dodge(width = 0.9))  +
+  facet_wrap(~associated_gene, scale = "free_y") +  # Separate plots per gene
+  labs(title = "Structural Isoform expression for neoantigen-encoding genes",
+       y = "log2(CPM+1)", x = " Pancreatic β-cell samples") +
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                               "incomplete-splice_match" = "#FC8D59", 
+                               "novel_in_catalog" = "#78C679", 
+                               "novel_not_in_catalog" = "#EE6A50", 
+                               "genic" = "#969696")) +
+  scale_x_discrete(labels = c("bc01" = "Stressed", 
+                              "bc02" = "Control")) +
+  theme(legend.position = "bottom")  +
+guides(
+    fill = guide_legend(title = "Structural category", ncol = 2))
+
+
+Expression_str_categ
+
+#ggsave("Neontigens_expression_str_categ.png", Expression_str_categ )
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plotting FSM and ISM isoform expression for 3 selected genes - no log2 transfo
+Expression_str_categ_filt <- ggplot(filter(all_neoantigen_class_gp_by_gene,
+                                        associated_gene %in% c("INS", 
+                                                               "CHGA", 
+                                                               "GAD2"))) +
+  geom_col(mapping = aes(x = sample , 
+                         y = logCPM, 
+                         fill = structural_category), 
+           position = position_dodge(width = 0.9))  +
+  facet_wrap(~associated_gene, scale = "free_y") +  # Separate plots per gene
+  labs(title = "Structural Isoform expression for neoantigen-encoding genes",
+       y = "log2(CPM+1)", 
+       x = " Pancreatic β-cell samples") +
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                               "incomplete-splice_match" = "#FC8D59", 
+                               "novel_in_catalog" = "#78C679", 
+                               "novel_not_in_catalog" = "#EE6A50", 
+                               "genic" = "#969696")) +
+  scale_x_discrete(labels = c("bc01" = "Stressed", 
+                              "bc02" = "Control")) +
+  theme(legend.position = "bottom")  +
+guides(
+    fill = guide_legend(title = "Structural category", 
+                        ncol = 2))
+
+
+Expression_str_categ_filt
+```
+
+### 3) Exons : Group by gene, structural category, sample, exons
+
+#### - only FSM
+
+```{r}
+# Step 1: Aggregate FL_count and number of exons by gene, structural_category, sample 
+all_neoantigen_class_gp_by_exon <- 
+  all_neoantigen_class %>%
+  group_by(associated_gene, 
+           structural_category, 
+           sample, exons) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), 
+            .groups = 'drop')  # Aggregating FL counts per gene, structural category, sample and exons
+
+# Step 2: Calculate TPM
+all_neoantigen_class_gp_by_exon <- all_neoantigen_class_gp_by_exon %>%
+  mutate(CPM = (FL_sum / case_when(sample == "bc01" ~ bc01_tot_FL_count,
+                                   sample == "bc02" ~ bc02_tot_FL_count)) * 1e6)
+
+# Step 3: Calculate log2(TPM + 1)
+all_neoantigen_class_gp_by_exon <- 
+  all_neoantigen_class_gp_by_exon %>%
+  mutate(logCPM = log2(CPM + 1))
+```
+
+```{r}
+head(all_neoantigen_class_gp_by_exon, 10)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plotting exons
+FSM_exons <- ggplot(filter(all_neoantigen_class_gp_by_exon, 
+                           structural_category %in% c("full-splice_match"))) +
+  geom_point(mapping = aes(x = sample, 
+                           y = exons, 
+                           size = logCPM), 
+             shape = 1) +
+  facet_wrap(~associated_gene, scales = "free_y") +
+  labs(title = "Number of exons for FSM isoforms among neoantigen-encoding genes",
+       y = "Number of exons", x = "Pancreatic β-cell samples", 
+       size = "norm. FL read counts (log2(CPM+1)" ) +
+  scale_x_discrete(labels = c("bc01" = "Stressed", 
+                              "bc02" = "Control")) +
+  theme(legend.position = "bottom") +
+  scale_y_continuous(expand = expansion(mult = 0.15))  # Adjust margin around the y-axis
+
+
+FSM_exons
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plotting exons
+FSM_exons_filt <- ggplot(filter(all_neoantigen_class_gp_by_exon, 
+                           structural_category %in% c("full-splice_match") & 
+                             associated_gene %in% c("INS", 
+                                                    "CHGA", 
+                                                    "GAD2"))) +
+  geom_point(mapping = aes(x = sample, 
+                           y = exons, 
+                           size = logCPM), 
+             shape = 1) +
+  facet_wrap(~associated_gene, 
+             scales = "free_y") +
+  labs(title = "Number of exons for FSM isoforms among neoantigen-encoding genes",
+       y = "Number of exons", x = "Pancreatic β-cell samples", 
+       size = "norm. FL read counts log2(CPM+1)" ) +
+  scale_x_discrete(labels = c("bc01" = "Stressed", 
+                              "bc02" = "Control")) +
+  theme(legend.position = "bottom") +
+  scale_y_continuous(expand = expansion(mult = 0.15))  # Adjust margin around the y-axis
+
+
+FSM_exons_filt
+```
+
+#### - FSM + ISM
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plotting exons
+FSM_ISM_exons <- ggplot(filter(all_neoantigen_class_gp_by_exon, 
+                           structural_category %in% c("full-splice_match", "incomplete-splice_match"))) +
+  geom_point(mapping = aes(x = sample, 
+                           y = exons, 
+                           size = logCPM, 
+                           color = structural_category), 
+             shape = 1 , 
+    position = position_dodge(width = 0.5)) + # Spread points)
+  facet_wrap(~associated_gene, 
+             scales = "free_y") +
+  labs(title = "Number of exons for FSM and ISM isoforms among neoantigen-encoding genes",
+       y = "Number of exons", 
+       x = "Pancreatic β-cell samples", 
+       size = "norm. FL read counts (log2(CPM+1)" ) +
+  scale_x_discrete(labels = c("bc01" = "Stressed", 
+                              "bc02" = "Control")) +
+  theme(legend.position = "bottom") +
+  scale_color_manual(values = c("full-splice_match" = "#6BAED6", 
+                               "incomplete-splice_match" = "#FC8D59")) +
+  scale_y_continuous(expand = expansion(mult = 0.15)) +  # Adjust margin around the y-axis
+guides(
+    color = guide_legend(title = "Structural category", ncol = 1))
+FSM_ISM_exons
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plotting exons filtered by 3 selected genes
+FSM_ISM_exons <- ggplot(filter(all_neoantigen_class_gp_by_exon, 
+                           structural_category %in% c("full-splice_match", "incomplete-splice_match") & associated_gene %in% c("INS", "CHGA", "GAD2"))) +
+  geom_point(mapping = aes(x = sample,
+                           y = exons, 
+                           size = logCPM, 
+                           color = structural_category), 
+             shape = 1 , 
+    position = position_dodge(width = 0.5)) + # Spread points)
+  facet_wrap(~associated_gene, scales = "free_y") +
+  labs(title = "Number of exons for FSM and ISM isoforms among neoantigen-encoding genes",
+       y = "Number of exons", x = "Pancreatic β-cell samples", 
+       size = "norm. FL read counts (log2(CPM+1)" ) +
+  scale_x_discrete(labels = c("bc01" = "Stressed", 
+                              "bc02" = "Control")) +
+  theme(legend.position = "bottom") +
+  scale_color_manual(values = c("full-splice_match" = "#6BAED6", 
+                               "incomplete-splice_match" = "#FC8D59")) +
+  scale_y_continuous(expand = expansion(mult = 0.15)) +  # Adjust margin around the y-axis
+guides(
+    color = guide_legend(title = "Structural category", ncol = 1))
+
+FSM_ISM_exons
+#ggsave("Select_neoantigen_FSM_ISM_exons.png", FSM_ISM_exons)
+```
+
+### 4 ) RBN: Group by gene, category, FL count
+
+```{r}
+# Aggregate FL_count by gene, structural_category, sample 
+all_neoantigen_class_gp_gene_FL <- all_neoantigen_class %>%
+  group_by(associated_gene, structural_category, sample) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')  
+
+# pivoting wider the dataframe
+library(tidyr)
+all_neoantigen_class_gp_gene_FL_wide <- 
+  tidyr::pivot_wider(all_neoantigen_class_gp_gene_FL, 
+                     names_from = "structural_category",
+                     values_from = "FL_sum", 
+                     values_fill = list(FL_sum = 0))
+
+# Calculate TD for each sample and gene
+all_neoantigen_class_gp_gene_FL_wide <- 
+  all_neoantigen_class_gp_gene_FL_wide %>%
+  mutate(NIC_NNC = novel_in_catalog + novel_not_in_catalog) %>%
+  mutate(TD = (NIC_NNC / (NIC_NNC + `full-splice_match`))) # `and `allows the sign - in the middle of the name to be considered as an operator
+
+```
+
+```{r}
+head(all_neoantigen_class_gp_gene_FL, 10)
+```
+
+```{r}
+head(all_neoantigen_class_gp_gene_FL_wide,10)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plotting TD
+TD_neo <- ggplot(all_neoantigen_class_gp_gene_FL_wide) +
+  geom_col(mapping = aes(x = sample, 
+                         y = TD, 
+                         fill = sample)) + 
+  facet_wrap(~associated_gene, 
+             scales = "free_y") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", 
+                              "bc02" = "Control")) +
+  labs(title = "TD for neoantigen-encoding genes", 
+       x = "Pancreatic β-cell samples",  
+       y = "TD score")
+             
+TD_neo
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plotting RBN v2
+TD_neoV2 <- ggplot(all_neoantigen_class_gp_gene_FL_wide) +
+  geom_col(mapping = aes(x = sample, 
+                         y = TD, 
+                         fill = sample)) + 
+  facet_grid(~associated_gene) +
+  scale_fill_manual(values = c("bc01" = "darkseagreen3", 
+                               "bc02" = "palevioletred3")) + 
+  theme(legend.position = "none", 
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "TD score for major neoantigen-encoding genes",
+       y = "TD score", 
+       x = " Pancreatic β-cell samples")
+             
+TD_neoV2
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plotting RBN for 3 selected genes
+TD_neo_filt <- ggplot(filter(all_neoantigen_class_gp_gene_FL_wide,
+                             associated_gene %in% c("INS", "CHGA", "GAD2"))) +
+  geom_col(mapping = aes(x = sample, 
+                         y = TD, 
+                         fill = sample)) + 
+  facet_wrap(~associated_gene, 
+             scales = "free_y") +
+  scale_fill_manual(values = c("bc01" = "darkseagreen3", 
+                               "bc02" = "palevioletred3")) +
+  scale_x_discrete(labels = c("bc01" = "Stressed", 
+                              "bc02" = "Control")) +
+  labs(title = "TD score for major neoantigen-encoding genes", 
+       x = "Pancreatic β-cell samples", 
+       y = "TD score") + 
+  theme(legend.position = "none",
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 16),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    axis.title = element_text(size = 16),
+    plot.title = element_text(size = 22, face = "bold"),
+    strip.text = element_text(size = 14))
+             
+TD_neo_filt
+```
+
+### 5) FSM subcategories
+
+```{r}
+# Step 1: filter only FSM isoforms
+all_neoantigen_FSM <- all_neoantigen_class %>% 
+  filter(structural_category == "full-splice_match")
+  
+# Step 2: Aggregate FL_count by gene, structural_category, and sample
+all_neoantigen_FSM <- all_neoantigen_FSM %>%
+  group_by(associated_gene, subcategory, sample) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), 
+            .groups = 'drop') 
+# Aggregating FL counts per gene, subcategory, and sample
+
+# Step 3: Calculate TPM
+all_neoantigen_FSM <- all_neoantigen_FSM %>%
+  mutate(CPM = (FL_sum / case_when(
+    sample == "bc01" ~ bc01_tot_FL_count,
+    sample == "bc02" ~ bc02_tot_FL_count)) * 1e6)
+
+# Step 3: Calculate log2(TPM + 1)
+all_neoantigen_FSM <- all_neoantigen_FSM %>%
+  mutate(logCPM = log2(CPM + 1))
+
+# Step 4 : reorder subcategories for better plotting
+all_neoantigen_FSM$subcategory <- 
+  factor(all_neoantigen_FSM$subcategory, 
+         levels = c("reference_match",
+                    "alternative_5end",
+                    "alternative_3end",
+                    "alternative_3end5end")) 
+                    # Ensure "reference_match" is first
+```
+
+```{r}
+head(all_neoantigen_FSM, 10)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot
+FSM_subcat <- ggplot(all_neoantigen_FSM) +
+  geom_col(mapping = aes(x = sample, y = CPM, fill = subcategory)) + 
+  facet_wrap(~associated_gene, scales = "free_y", nrow = 1) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c('reference_match'='#c4e1f2',
+                               "alternative_5end"='#7ccdfc',
+                               "alternative_3end"='#02314d',
+                               "alternative_3end5end"='#0e5a87'
+                               )) +
+  labs(title = " FSM isoform subcategories among neoantigen-encoding genes",
+       x = "Pancreatic β-cell samples", y = "Transcripts (counts per million)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+guides(
+    fill = guide_legend(title = "Subcategory", ncol = 2))
+FSM_subcat
+
+
+# try also plotting % transcripts
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot for 3 selected genes
+
+FSM_subcat_filt <- ggplot(filter(all_neoantigen_FSM,
+                             associated_gene %in% c("INS", "CHGA", "GAD2"))) +
+  geom_col(mapping = aes(x = sample, 
+                         y = CPM, 
+                         fill = subcategory)) + 
+  facet_wrap(~associated_gene, 
+             scales = "free_y", 
+             nrow = 1) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, 
+                                   hjust = 1)) +
+  scale_fill_manual(values = c('reference_match'='#c4e1f2',
+                               "alternative_5end"='#7ccdfc',
+                               "alternative_3end"='#02314d',
+                               "alternative_3end5end"='#0e5a87'
+                               )) +
+  labs(title = " FSM isoform subcategories among neoantigen-encoding genes",
+       x = "Pancreatic β-cell samples", 
+       y = "Reads (counts per million)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", 
+                              "bc02" = "Control")) +
+guides(
+    fill = guide_legend(title = "Subcategory", 
+                        ncol = 2)) +
+  theme(legend.position = "bottom",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12),
+    axis.text.x = element_text(size = 13),
+    axis.text.y = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    plot.title = element_text(size = 16, face = "bold"),
+    strip.text = element_text(size = 14))
+
+FSM_subcat_filt
+
+# ggsave("Select_neoantigen_FSM_subcat_filt.png", FSM_subcat_filt)
+```
+
+```{r}
+# Create new column with percentages
+all_neoantigen_FSM <- all_neoantigen_FSM %>%
+  group_by(associated_gene, sample) %>%  # Group by gene and sample
+  mutate(Total_FL_sum = sum(FL_sum),  # Compute total FL_sum per gene & sample
+         perc_FSM = (FL_sum / Total_FL_sum) * 100) %>%  # Calculate percentage
+  ungroup()  # Remove grouping after computation
+```
+
+```{r}
+head(all_neoantigen_FSM, 10)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot % of trancripts within FSM subcategories
+
+FSM_subcat_perc <- ggplot(all_neoantigen_FSM) +
+  geom_col(mapping = aes(x = sample, 
+                         y = perc_FSM, 
+                         fill = subcategory)) + 
+  facet_grid(~associated_gene) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c('reference_match'='#c4e1f2',
+                               "alternative_5end"='#7ccdfc',
+                               "alternative_3end"='#02314d',
+                               "alternative_3end5end"='#0e5a87'
+                               )) +
+  labs(title = " FSM isoform subcategories among neoantigen-encoding genes",
+       x = "Pancreatic β-cell samples", y = "FSM transcripts (%)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+guides(
+    fill = guide_legend(title = "Subcategory", ncol = 2))
+
+FSM_subcat_perc
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot % of trancripts within FSM subcategories for 3 selected genes
+
+FSM_subcat_perc_filt <- ggplot(filter(all_neoantigen_FSM,
+                             associated_gene %in% c("INS", "CHGA", "GAD2"))) +
+  geom_col(mapping = aes(x = sample, y = perc_FSM, fill = subcategory)) + 
+  facet_grid(~associated_gene) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c('reference_match'='#c4e1f2',
+                               "alternative_5end"='#7ccdfc',
+                               "alternative_3end"='#02314d',
+                               "alternative_3end5end"='#0e5a87'
+                               )) +
+  labs(title = " FSM isoform subcategories among neoantigen-encoding genes",
+       x = "Pancreatic β-cell samples", y = "FSM transcripts (%)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+guides(
+    fill = guide_legend(title = "Subcategory", ncol = 2))
+
+FSM_subcat_perc_filt
+
+#ggsave("Select_neo_FSM_subcat_perc_filt.png", FSM_subcat_perc_filt)
+```
+
+### 6) ISM subcategories
+
+```{r}
+# Step 1: filter only ISM isoforms
+all_neoantigen_ISM <- all_neoantigen_class %>% 
+  filter(structural_category == "incomplete-splice_match")
+  
+# Step 2: Aggregate FL_count by gene, structural_category, and sample
+all_neoantigen_ISM <- all_neoantigen_ISM %>%
+  group_by(associated_gene, subcategory, sample) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')  
+# Aggregating FL counts per gene, subcategory, and sample
+
+# Step 3: Calculate TPM
+all_neoantigen_ISM <- all_neoantigen_ISM %>%
+  mutate(CPM = (FL_sum / case_when(
+    sample == "bc01" ~ bc01_tot_FL_count,
+    sample == "bc02" ~ bc02_tot_FL_count)) * 1e6)
+
+# Step 3: Calculate log2(TPM + 1)
+all_neoantigen_ISM <- all_neoantigen_ISM %>%
+  mutate(logCPM = log2(CPM + 1))
+
+# Step 4 : reorder subcategories for better plotting
+all_neoantigen_ISM$subcategory <- 
+  factor(all_neoantigen_ISM$subcategory, 
+         levels = c("3prime_fragment",
+                    "5prime_fragment",
+                    "mono-exon",
+                    "internal_fragment",
+                    "intron_retention")) 
+                      # Ensure "reference_match" is first
+```
+
+```{r}
+head(all_neoantigen_ISM)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot
+ISM_subcat <- ggplot(all_neoantigen_ISM) +
+  geom_col(mapping = aes(x = sample, y = CPM, fill = subcategory)) + 
+  facet_wrap(~associated_gene, scales = "free_y", nrow = 1) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c("3prime_fragment" = "#c4531d",
+                    "5prime_fragment" = "#e0936e",
+                    "mono-exon" = "#cec2d2",
+                    "internal_fragment" = "#e37744",
+                    "intron_retention" = "#81eb82" )) +
+  labs(title = " ISM isoform subcategories among neoantigen-encoding genes",
+       x = "Pancreatic β-cell samples", 
+       y = "Transcripts (counts per million)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", 
+                              "bc02" = "Control")) +
+guides(
+    fill = guide_legend(title = "Subcategory", ncol = 2))
+
+ISM_subcat
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot for 3 selected genes
+ISM_subcat_filt <- ggplot(filter(all_neoantigen_ISM,
+                             associated_gene %in% c("INS", "CHGA", "GAD2"))) +
+  geom_col(mapping = aes(x = sample, y = CPM, fill = subcategory)) + 
+  facet_wrap(~associated_gene, scales = "free_y", nrow = 1) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c("3prime_fragment" = "#c4531d",
+                    "5prime_fragment" = "#e0936e",
+                    "mono-exon" = "#cec2d2",
+                    "internal_fragment" = "#e37744",
+                    "intron_retention" = "#81eb82" )) +
+  labs(title = " ISM isoform subcategories among neoantigen-encoding genes",
+       x = "Pancreatic β-cell samples", y = "Transcripts (counts per million)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+guides(
+    fill = guide_legend(title = "Subcategory", ncol = 2))
+
+ISM_subcat_filt
+```
+
+```{r}
+# Create new column with percentages
+all_neoantigen_ISM <- all_neoantigen_ISM %>%
+  group_by(associated_gene, sample) %>%  # Group by gene and sample
+  mutate(Total_FL_sum = sum(FL_sum),  # Compute total FL_sum per gene & sample
+         perc_ISM = (FL_sum / Total_FL_sum) * 100) %>%  # Calculate percentage
+  ungroup()  # Remove grouping after computation
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot for 3 selected genes
+ISM_subcat_perc_filt <- ggplot(filter(all_neoantigen_ISM,
+                             associated_gene %in% c("INS", "CHGA", "GAD2"))) +
+  geom_col(mapping = aes(x = sample, y = perc_ISM, fill = subcategory)) + 
+  facet_wrap(~associated_gene, scales = "free_y", nrow = 1) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c("3prime_fragment" = "#c4531d",
+                    "5prime_fragment" = "#e0936e",
+                    "mono-exon" = "#cec2d2",
+                    "internal_fragment" = "#e37744",
+                    "intron_retention" = "#81eb82" )) +
+  labs(title = " ISM isoform subcategories among neoantigen-encoding genes",
+       x = "Pancreatic β-cell samples", y = "Transcripts (counts per million)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+guides(
+    fill = guide_legend(title = "Subcategory", ncol = 2))
+
+ISM_subcat_perc_filt
+
+ggsave("Select_neo_ISM_subcat_perc_filt.png", ISM_subcat_perc_filt)
+```
+
+### 7) NNC subcategories
+
+```{r}
+# Step 1: filter only NNC isoforms
+all_neoantigen_NNC <- all_neoantigen_class %>% filter(structural_category == "novel_not_in_catalog")
+  
+# Step 2: Aggregate FL_count by gene, structural_category, and sample
+all_neoantigen_NNC <- all_neoantigen_NNC %>%
+  group_by(associated_gene, subcategory, sample) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')  # Aggregating FL counts per gene, subcategory, and sample
+
+# Step 3: Calculate TPM
+all_neoantigen_NNC <- all_neoantigen_NNC %>%
+  mutate(CPM = (FL_sum / case_when(sample == "bc01" ~ bc01_tot_FL_count,
+                                   sample == "bc02" ~ bc02_tot_FL_count)) * 1e6)
+
+# Step 3: Calculate log2(TPM + 1)
+all_neoantigen_NNC <- all_neoantigen_NNC %>%
+  mutate(logCPM = log2(CPM + 1))
+
+# Check the different existing subcategories
+unique(all_neoantigen_NNC$subcategory)
+```
+
+```{r}
+head(all_neoantigen_NNC)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot
+NNC_subcat <- ggplot(all_neoantigen_NNC) +
+  geom_col(mapping = aes(x = sample, y = CPM, fill = subcategory)) + 
+  facet_wrap(~associated_gene, scales = "free_y", nrow = 1) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1))  +
+  labs(title = "Novel_not_in_catalog isoform subcategories among neoantigen-encoding genes",
+       x = "Pancreatic β-cell samples", y = "Transcripts (counts per million)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+scale_fill_manual(values=c("intron_retention"='#81eb82', 
+                    "at_least_one_novel_splicesite" = "#32734d" ))
+
+NNC_subcat
+```
+
+### 8) NIC subcategories
+
+```{r}
+# Step 1: filter only NIC isoforms
+all_neoantigen_NIC <- all_neoantigen_class %>% filter(structural_category == "novel_in_catalog")
+  
+# Step 2: Aggregate FL_count by gene, structural_category, and sample
+all_neoantigen_NIC <- all_neoantigen_NIC %>%
+  group_by(associated_gene, subcategory, sample) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')  # Aggregating FL counts per gene, subcategory, and sample
+
+# Step 3: Calculate TPM
+all_neoantigen_NIC <- all_neoantigen_NIC %>%
+  mutate(CPM = (FL_sum / case_when(sample == "bc01" ~ bc01_tot_FL_count,
+                                   sample == "bc02" ~ bc02_tot_FL_count)) * 1e6)
+
+# Step 3: Calculate log2(TPM + 1)
+all_neoantigen_NIC <- all_neoantigen_NIC %>%
+  mutate(logCPM = log2(CPM + 1))
+
+# Check the different existing subcategories
+unique(all_neoantigen_NIC$subcategory)
+```
+
+```{r}
+head(all_neoantigen_NIC)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot
+NIC_subcat <- ggplot(all_neoantigen_NIC) +
+  geom_col(mapping = aes(x = sample, y = CPM, fill = subcategory)) + 
+  facet_wrap(~associated_gene, scales = "free_y", nrow = 1) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = 1))  +
+  labs(title = "Novel_in_catalog isoform subcategories among neoantigen-encoding genes",
+       x = "Pancreatic β-cell samples", y = "Transcripts (counts per million)") +
+  scale_x_discrete(labels = c("bc01" = "Stressed", "bc02" = "Control")) +
+scale_fill_manual(values=c("combination_of_known_junctions"='#014d02',
+                   "combination_of_known_splicesites"='#379637',  
+                   "intron_retention"='#81eb82', 
+                   "not_combination_of_annot_junctions"='#6ec091',
+                   "mono-exon_by_intron_retention"="#4aaa72")) +
+guides(
+    fill = guide_legend(title = "Subcategory", ncol = 2))
+
+NIC_subcat
+```

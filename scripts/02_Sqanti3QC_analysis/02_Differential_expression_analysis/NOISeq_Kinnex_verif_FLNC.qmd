@@ -1,0 +1,640 @@
+---
+title: "NOIseq differential expression analysis of pancreatic beta cells RNAseq using PacBio-Kinnex"
+author: "Julia Lienard"
+date: 2025-02-27
+date-modified: last-modified
+format: html
+editor: visual
+---
+
+The data from kinnex long read sequencing (MAS-ISO seq method) of the 2 samples of human pancreatic beta cell (endoC-BetaH1) provided by Lorenzo Pasquali's lab, were processed with the isoseq pipeline until isoseq cluster2 (<https://isoseq.how/getting-started.html>). Mapping of the reads were done against the human reference genome GRCh38.
+
+SqantiQC was run and the classification output files (found here: /home/jlienard/BetaCells_kinnex/04_sqantiQC/02_Using_GRCh38_mapping/output), merged with proper FLNC counts (using the script 00_Merge_SqQCclass_FLcounts.R) are used here to extract FL counts for each gene and built an expression matrix with the two samples (endoC-BetaH1 stressed or control, only 1 replicate for each condition, called respectively bc01 and bc02). The matrix is analysed to identify genes upregulated in stressed cells or in control cells and see whether the genes with higher TD (or RBN) in stressed cells are genes upregulated or not compared to control cells.
+
+As there is only 1 replicate for each condition, the use of DESeq2 or EdgeR was not possible. **NOISeq is the best option** for no-replicate RNA-seq data.
+
+## A - Import library and data
+
+```{r}
+library(readr)
+library(dplyr)
+```
+
+```{r}
+# loading output from Sqanti-QC (GRCh38 ref genome used for mapping) merged with isoCollapse flcn_count.txt file (using 00_Merge_SqQCclass_FLcounts.R)
+bc01_class <- read_delim("../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc01_class_FLNC.txt" , delim = "\t", escape_double = FALSE, trim_ws = TRUE)
+
+bc02_class <- read_delim("../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc02_class_FLNC.txt" , delim = "\t", escape_double = FALSE, trim_ws = TRUE)
+```
+
+## B - Prepare the data
+
+```{r}
+# Checking my numbers
+# sum of all FL in the classification file using R:
+bc01_tot_FL_count <- sum(bc01_class$FLNC, na.rm=T) # matches with the bash command results !
+bc02_tot_FL_count <- sum(bc02_class$FLNC, na.rm=T)
+```
+
+```{r}
+library(stringr)
+# filter bc01_class for keeping only the isoforms with no RT switching and the annotated genes :
+bc01_class_filt <- bc01_class %>% filter(RTS_stage == FALSE & !str_starts(associated_gene, "novelGene_"))
+
+bc02_class_filt <- bc02_class %>% filter(RTS_stage == FALSE & !str_starts(associated_gene, "novelGene_"))
+```
+
+```{r}
+# Aggregate FL_count by gene
+bc01_class_filt_gp_gene_FL <- bc01_class_filt %>%
+  group_by(associated_gene) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop') # 24890 genes
+
+bc02_class_filt_gp_gene_FL <- bc02_class_filt %>%
+  group_by(associated_gene) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop') # 25145 genes
+```
+
+```{r}
+# Rename FL_count column using sample names for future merging of dataframes
+bc01_class_filt_gp_gene_FL <- 
+  bc01_class_filt_gp_gene_FL %>% dplyr::rename(bc01_FL_sum = FL_sum)
+bc02_class_filt_gp_gene_FL <- 
+  bc02_class_filt_gp_gene_FL %>% dplyr::rename(bc02_FL_sum = FL_sum)
+```
+
+```{r}
+# join the two filtered dataframes with FL_counts grouped per gene
+bc01_bc02_FL_gp_gene <- 
+  dplyr::inner_join(bc01_class_filt_gp_gene_FL, 
+                    bc02_class_filt_gp_gene_FL, 
+                    by = "associated_gene")
+
+# here the number of genes retained (22006) is higher that what was found during TD calculation, but for this latter calculation, the genes not having any of FSM, NIC or NNC isoforms were not kept (total kept 18179).
+```
+
+## C - NOISeq Differential expression analysis
+
+<https://bioinfo.cipf.es/noiseq/doku.php>
+
+<https://bioinfo.cipf.es/noiseq/lib/exe/fetch.php?media=posternoiseq_2012.pdf>
+
+```{r}
+# loading library
+library(NOISeq)
+```
+
+Explanation from AI:
+
+NOISeq is an **R package** designed to analyze RNA-seq data, especially for cases where you have **low or no replicates**. It relies on a **non-parametric approach** to calculate differential expression, and one of its main outputs is the **probability** of differential expression for each gene.
+
+Here's a breakdown of how **NOISeq** generates **probabilities**:
+
+1\. **Data Preprocessing**
+
+The first step in NOISeq is **normalization**. This is essential because RNA-seq data can have systematic biases, such as differences in library size. NOISeq uses methods like **upper quartile normalization** or **TPM** (transcripts per million) for this.
+
+2\. **Noise Model (Empirical Distributions)**
+
+NOISeq estimates **probabilities of differential expression** by generating an empirical noise model. It uses **non-parametric resampling** (like bootstrapping) and compares the distributions of gene expression values between two conditions (e.g., `Condition1` and `Condition2`).
+
+-   **Expression Levels**: For each gene, NOISeq looks at the expression levels in both conditions and compares them.
+
+-   **Empirical Distribution**: Based on the observed distributions of expression values (from the two conditions), it builds a **null distribution** of gene expression data. This distribution represents the **expected noise** (random fluctuation in expression levels) between conditions.
+
+3\. **Probability Calculation**
+
+For each gene, NOISeq calculates a **probability (Prob)** value that reflects how likely it is that the gene is **differentially expressed**. This is done by comparing the observed expression levels to the generated null distribution:
+
+-   The **Prob** value represents the **likelihood** that the observed difference in expression between the conditions is **not due to random noise**.
+
+-   A **high probability (e.g., \>= 0.9)** indicates that the gene is **likely differentially expressed**.
+
+-   A **low probability (e.g., \< 0.9)** suggests that the observed difference might just be due to random variation.
+
+The probability can range from **0** (no evidence of differential expression) to **1** (high confidence of differential expression).
+
+### STEP-1: Differential expression analysis
+
+#### 1) perform the analysis
+
+```{r}
+# set the random seed for reproducible numbers
+set.seed(2025)
+
+library(tibble)
+# Convert data to a format suitable for NOISeq
+bc01_bc02_FL_gp_gene <- bc01_bc02_FL_gp_gene %>%
+  tibble::column_to_rownames(var = "associated_gene")
+bc01_bc02_FL_gp_gene <- as.data.frame(bc01_bc02_FL_gp_gene)
+```
+
+```{r}
+# Create a data object
+mydata <- readData(data = bc01_bc02_FL_gp_gene[, c("bc01_FL_sum", "bc02_FL_sum")],
+                   factors = data.frame(Condition = c("stress", "control")))
+
+# Run NOISeq for differential expression
+myresults <- noiseq(mydata, norm = "tmm", factor = "Condition")
+
+# Get differentially expressed genes
+de_genes <- myresults@results
+```
+
+norm = ""tmm": Trimmed Mean of M-values — normalizes by assuming most genes are **not differentially expressed**. Recommended for differential expression with comparable expression distributions between samples .
+
+#### 2 ) Extract Differentially Expressed Genes (DEGs)
+
+The output of `noiseq()` is an S4 object, where the results are stored inside the `@results` slot.
+
+```{r}
+# extract the DEGs
+de_genes <- myresults@results[[1]]  # Extract results from the first comparison
+```
+
+-   **M**: log2 fold-change (`log2(Condition2 / Condition1)`)
+
+-   **D**: Absolute difference in expression
+
+-   **Prob**: Probability of being differentially expressed (closer to 1 = more likely DE)
+
+#### 3 ) Filter for Significant Genes
+
+NOISeq does not use **p-values** but instead uses **probabilities** (`Prob`). A typical threshold for calling **differentially expressed genes (DEGs)** is **Prob ≥ 0.8 or 0.9**.
+
+```{r}
+# Add a new column to mark significant genes
+de_genes$Signif_gene <- ifelse(de_genes$prob >= 0.9, "yes", "no")
+
+# Add a column to specify which condition has higher expression (if significant)
+de_genes$Sample_DE_up <- ifelse(de_genes$Signif_gene == "yes", 
+                                ifelse(de_genes$M > 0, "control", "stress"), 
+                                "none")
+# if the probability is significant ("yes"), we look if it is a stress or a control DEG by looking at if M is negative (stress DEG) or positive (control DEG) and complete the column Sample_DE_up. For probability not significant ("no"), the column Sample_DE_up gets attributed "none".
+
+# View updated dataframe
+head(de_genes)
+
+```
+
+-   `ifelse(de_genes$Prob >= 0.9, "yes", "no")`: Creates **Signif_gene** based on probability.
+
+-   `ifelse(de_genes$M > 0, "Condition2", "Condition1")`:
+
+    -   If `M > 0`, the fold-change is **positive**, meaning `Condition2` (here control) has higher expression.
+
+    -   If `M < 0`, then `Condition1 (here stress)` has higher expression.
+
+    -   If `Signif_gene == "no"`, it sets `Sample_DE_up` to **none** (not differentially expressed).
+
+```{r}
+# Select top 50 DEGs for each sample group 
+## - STRESS
+
+library(dplyr)
+
+top50_stress_DEGs <- de_genes %>%
+  filter(Sample_DE_up == "stress") %>%    # Only stress-upregulated genes
+  slice_min(order_by = ranking, n = 50)   # 50 smallest (most negative) ranking values
+
+## CONTROL
+
+top50_control_DEGs <- de_genes %>%
+  filter(Sample_DE_up == "control") %>%       # Keep only genes up in stress
+  arrange(desc(ranking)) %>%                 # Sort by ranking, highest first
+  slice_head(n = 50)                     # Take the top 50 rows
+
+library(tibble)
+
+top100_stress_control_DEGs <- bind_rows(top50_stress_DEGs, top50_control_DEGs)
+
+
+# export dataframe
+write.csv(top100_stress_control_DEGs, "../../../analysis/02_Differential_expression_analysis/top100_stress_control_DEGs.csv")
+```
+
+```{r}
+# Select 900 not DEGs for the two sample group 
+## - STRESS
+
+library(dplyr)
+library(tidyr)
+
+NotDEG_450_neg <- de_genes %>%
+  filter(Sample_DE_up == "none") %>%
+  tidyr::drop_na() %>% 
+  slice_min(order_by = ranking, n = 450)   # 450 smallest (most negative) ranking values
+
+## CONTROL
+
+NotDEG_450_pos <- de_genes %>%
+  filter(Sample_DE_up == "none") %>%
+  tidyr::drop_na() %>% 
+  arrange(desc(ranking)) %>%                 # Sort by ranking, highest first
+  slice_head(n = 450)                         # Take the top 450 rows
+
+top900_NOT_DEGs <- bind_rows(NotDEG_450_neg, NotDEG_450_pos) %>% rownames_to_column(var = "associated_gene")
+
+# export dataframe if needed
+write.csv(top900_NOT_DEGs, "../../../analysis/02_Differential_expression_analysis/top900_NOT_DEGs.csv")
+
+top900_NOT_DEGs_and_top100_DEGs_list <- bind_rows(top900_NOT_DEGs, top100_stress_control_DEGs) %>% dplyr::select(associated_gene)
+
+writeLines(top900_NOT_DEGs_and_top100_DEGs_list$associated_gene,
+           "../../../analysis/02_Differential_expression_analysis/top900_NOT_DEGs_and_top100_DEGs_list_FLNC.txt")
+```
+
+```{r}
+# Select 2000 not DEGs for the two sample group 
+## - STRESS
+
+library(dplyr)
+library(tidyr)
+
+NotDEG_1000_neg <- de_genes %>%
+  filter(Sample_DE_up == "none") %>%
+  tidyr::drop_na() %>% 
+  slice_min(order_by = ranking, n = 1000)   # 1000 smallest (most negative) ranking values
+
+## CONTROL
+
+NotDEG_1000_pos <- de_genes %>%
+  filter(Sample_DE_up == "none") %>%
+  tidyr::drop_na() %>% 
+  arrange(desc(ranking)) %>%                 # Sort by ranking, highest first
+  slice_head(n = 1000)                         # Take the top 1000 rows
+
+top2000_NOT_DEGs <- bind_rows(NotDEG_1000_neg, NotDEG_1000_pos) %>% 
+  rownames_to_column(var = "associated_gene")
+
+# export dataframe
+write.csv(top2000_NOT_DEGs, "../../../analysis/02_Differential_expression_analysis/top2000_NOT_DEGs.csv")
+
+top2000_NOT_DEGs_and_top100_DEGs_list <- bind_rows(top2000_NOT_DEGs, top100_stress_control_DEGs) %>% dplyr::select(associated_gene)
+
+writeLines(top2000_NOT_DEGs_and_top100_DEGs_list$associated_gene,
+           "../../../analysis/02_Differential_expression_analysis/top2000_NOT_DEGs_and_top100_DEGs_list_FLNC.txt")
+```
+
+#### 4) Change format of DEA table
+
+```{r}
+library(tibble)
+de_genes <- rownames_to_column(de_genes, var = "associated_gene")
+```
+
+#### 5) Volcano plot
+
+```{r}
+library(ggplot2)
+volcano <- ggplot(data = de_genes) +
+  geom_point(mapping = aes(x=M, 
+                           y=prob, 
+                           color=Sample_DE_up),
+             size = 0.5) +
+  coord_cartesian(ylim=c(0, 1), xlim=c(-8,8)) +
+  scale_x_continuous(breaks = seq(-8, 8, 2)) +
+  scale_color_manual(values = c("palevioletred3", "grey", "darkseagreen3"),
+                     name = "Upregulated\ngenes") +
+  geom_hline(yintercept = 0.9,
+             col = 'gray60',
+             linetype = 'dashed' ) +
+  labs(title = "Differential expression (DE) of pancreatic cells - NOISeq",
+       x = "Log2 Fold-change", y = "DE probability") + 
+  theme(axis.title = element_text(size = 12), axis.text = element_text(size = 12))
+volcano
+```
+
+#### 6) Plot neoantigens
+
+```{r}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+# Reshape data from wide to long format
+de_genes_long <- de_genes %>%
+  pivot_longer(cols = c(control_mean, stress_mean),
+               names_to = "Condition",
+               values_to = "Expression") %>%
+  mutate(Condition = ifelse(Condition == "control_mean", "Control", "Stress"))
+
+# Filter to top genes
+filtered_data <- de_genes_long %>%
+  filter(associated_gene %in% c("INS", "CHGA", "GAD2"))
+
+# order Condition
+filtered_data$Condition <- factor(
+  filtered_data$Condition,
+  levels = c("Stress", "Control")
+)
+
+# Plot
+ggplot(filtered_data, aes(x = associated_gene, y = log2(Expression), fill = Condition)) +
+  geom_col(position = position_dodge(width = 0.6), width = 0.45) +
+  labs(title = "Expression per Gene",
+       x = "", y = "NOISeq expression(log2)") +
+  scale_x_discrete(expand = c(0.1, -0.1)) +  # Reduce white space around bars
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "top") +
+  scale_fill_manual(values = c("Stress" = "darkseagreen3", "Control" = "palevioletred3")) 
+
+```
+
+### STEP-2: Associate Transcription divergency (TD) with the DE genes
+
+#### 1) Merge with TD_bc01bc02_results.tsv
+
+```{r}
+# importing data
+TD_result <- read_delim("../../../analysis/01_NIC_NNC_ratio_analysis/03_NIC_NNC_ratio_using_R_FLNC/TD_bc01bc02_results_FLNC.tsv" , delim = "\t", escape_double = FALSE, trim_ws = TRUE)
+
+
+# merge RBN_result with de_genes by the associated_gene column
+
+de_TD_genes <- inner_join(de_genes, TD_result, by = "associated_gene")
+```
+
+#### 2) Create 3 RBN_diff categories
+
+```{r}
+# depending on the RBN_diff, create a RBN_diff_category variable:
+de_TD_genes <- de_TD_genes %>%
+  mutate(TD_diff_category = (case_when(TD_diff > 0 ~ ">TDbc01",
+                                       TD_diff < 0 ~ ">TDbc02",
+                                       TD_diff == 0 ~ "NullTD")))
+```
+
+```{r}
+# Count the number of associated_gene upregulated for each sample group
+count_up_genes <- de_TD_genes %>%
+  filter(Sample_DE_up %in% c("control", "stress", "none")) %>%
+  group_by(Sample_DE_up) %>%
+  summarize(count = n_distinct(associated_gene))
+
+# Print the result
+count_up_genes
+```
+
+### STEP-3: Plot RBN difference depending on gene expression
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Filter and count the occurrences of each condition
+gene_counts <- de_TD_genes %>%
+  filter(Sample_DE_up %in% c("stress", "control")) %>%
+  group_by(TD_diff_category, Sample_DE_up) %>%
+  summarise(gene_count = n(), .groups = "drop")
+
+# Plot 
+ggplot(gene_counts, aes(x = Sample_DE_up, y = gene_count, fill = Sample_DE_up)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~TD_diff_category,
+             labeller = labeller(TD_diff_category = c(">TDbc02" = "TD control > stress",
+                                                       ">TDbc01" = "TD stress > control",
+                                                       "NullTD" = "Similar TD"))) +
+  theme(legend.position = "none")  +
+  labs(title = "Counts of upregulated genes split by TD difference category", 
+       x = "Sample", 
+       y = "Number of upregulated genes",
+       subtitle = "DEA done with NOISeq") +
+  scale_fill_manual(values = c("stress" = "darkseagreen3", "control" = "palevioletred3"))  # Custom colors
+
+```
+
+```{r}
+library(dplyr)
+
+# Count the number of unique associated_gene for each TD_diff_category
+count_TD_categories <- de_TD_genes %>%
+  filter(TD_diff_category %in% c("NullTD", ">TDbc01", ">TDbc02")) %>%
+  group_by(TD_diff_category) %>%
+  summarize(count = n_distinct(associated_gene))
+
+# Print the result
+count_TD_categories
+
+
+```
+
+### STEP4: contingency table (2x2) for TD and upregulated genes under stress
+
+```{r}
+# calculate gene counts for TD or not and DEG or not in stressed cells 
+de_TD_genes <- de_TD_genes %>%
+  mutate(
+    TD_group = ifelse(TD_diff_category == ">TDbc01", ">TDbc01", ">TDbc02_or_NullTD"),
+    DE_group = ifelse(Sample_DE_up == "stress", "stress", "control_or_none")
+  )
+
+# create contingency table
+contingency_table <- table(de_TD_genes$TD_group, de_TD_genes$DE_group)
+
+# Rename rows
+rownames(contingency_table) <- c("More TD under stress", "Not more TD under stress")
+ # rename columns
+colnames(contingency_table) <- c("Not upregulated under stress", "Upregulated under stress")
+print(contingency_table)
+
+library(readr)
+# Convert the table to a data frame
+contingency_df <- as.data.frame.matrix(contingency_table)
+
+# Add the row names as a proper column if you want them visible
+contingency_df <- tibble::rownames_to_column(contingency_df, var = "TD_status")
+
+# Save as TSV
+write_tsv(contingency_df, "../../../analysis/02_Differential_expression_analysis/contingency_stress_TD_DEG.tsv")
+```
+
+```{r}
+
+# plot
+TD_DEG <- ggplot(de_TD_genes) + 
+  geom_bar(mapping = aes(x = TD_diff_category,
+                         fill = Sample_DE_up), width = 0.4) + 
+  labs(title = "Upregulation of gene expression and TD status", 
+       x = "Transcription divergency status", 
+       y = "Gene counts",
+       subtitle = "DEA done with NOISeq") + 
+  scale_x_discrete(labels = c("NullTD" = "No difference", ">TDbc01" = "higher in stress", ">TDbc02" = "higher in control")) +
+  scale_fill_manual(values = c("stress" = "darkseagreen3", "control" = "palevioletred3", "none" = "grey"), name = "Upregulated genes")  # Custom colors
+
+TD_DEG
+#ggsave("TD_GeneExpression.png", plot = TD_DEG)
+```
+
+## D - Simple Fold-Change Analysis - no stats
+
+```{r}
+# Calculating the fold change
+bc01_bc02_FL_log2FC <- bc01_bc02_FL_gp_gene
+
+bc01_bc02_FL_log2FC <- bc01_bc02_FL_gp_gene %>%
+  mutate(log2FC = (log2(bc01_bc02_FL_log2FC$bc02_FL_sum + 1) - log2(bc01_bc02_FL_log2FC$bc01_FL_sum + 1)))
+
+# If log2FC is negative → bc01 has a higher value than bc02 → The gene is downregulated in bc02 compared to bc01.
+# If log2FC is positive → bc02 has a higher value than bc01 → The gene is upregulated in bc02 compared to bc01.
+```
+
+## E - Relationship between TD and gene expression
+
+```{r}
+ggplot(de_TD_genes, mapping = aes(x=TD_bc01, y = M)) +
+  geom_point(size = 0.3) +
+  geom_smooth(method='lm') + 
+  facet_wrap(~Sample_DE_up, labeller = 
+               labeller(Sample_DE_up = c("stress" = "upregulated in stress",
+                                         "control" = "upregulated in control",
+                                         "none" = "not upregulated"))) + 
+  labs(title = "Relationship between TD and gene expression - stressed cells", 
+       x = "TD score in stressed cells", 
+       y = "Log2 Fold-Change") 
+  
+```
+
+```{r}
+ggplot(de_TD_genes, mapping = aes(x=TD_bc02, y = M)) +
+  geom_point(size = 0.3) +
+  geom_smooth(method='lm') + 
+  facet_wrap(~Sample_DE_up, labeller = 
+               labeller(Sample_DE_up = c("stress" = "upregulated in stress",
+                                         "control" = "upregulated in control",
+                                         "none" = "not upregulated"))) + 
+  labs(title = "Relationship between TD and gene expression - control cells", 
+       x = "TD score in control cells", 
+       y = "Log2 Fold-Change") 
+```
+
+```{r}
+ggplot(de_TD_genes, mapping = aes(x=M, y = TD_bc01, color = Sample_DE_up)) +
+  geom_point(size = 0.3) +
+  labs(title = "Relationship between TD and gene expression - stressed cells", 
+       x = "Log2 Fold-Change", 
+       y = "TD score in stressed cells") + 
+  scale_color_manual(values = c("stress" = "darkseagreen3", "control" = "palevioletred3", "none" = "darkgrey"), name = "Upregulated genes") 
+```
+
+```{r}
+ggplot(de_TD_genes, mapping = aes(x=M, y = TD_bc02, color = Sample_DE_up)) +
+  geom_point(size = 0.3) +
+  labs(title = "Relationship between TD and gene expression - control cells", 
+       x = "Log2 Fold-Change", 
+       y = "TD score in control cells") + 
+  scale_color_manual(values = c("stress" = "darkseagreen3", "control" = "palevioletred3", "none" = "darkgrey"), name = "Upregulated genes") 
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+# Filtering the DE and TD table to keep only columns of interest
+de_TD_filt <- de_TD_genes %>% 
+  dplyr::select(associated_gene,control_mean,stress_mean,Sample_DE_up,TD_bc01,TD_bc02)
+
+# reshaping the table to have 2 rows per gene with data for bc01 or bc02
+de_TD_long <- de_TD_filt %>%
+  pivot_longer(
+    cols = c(control_mean, stress_mean, TD_bc01, TD_bc02),
+    names_to = "name",
+    values_to = "value"
+  ) %>%
+  mutate(
+    sample = case_when(
+      name == "control_mean" ~ "bc02",
+      name == "TD_bc02" ~ "bc02",
+      name == "stress_mean" ~ "bc01",
+      name == "TD_bc01" ~ "bc01"
+    ),
+    type = case_when(
+      name %in% c("control_mean", "stress_mean") ~ "NOISeq_expression",
+      name %in% c("TD_bc01", "TD_bc02") ~ "TD_score"
+    )
+  ) %>%
+  dplyr::select(associated_gene, Sample_DE_up, sample, type, value) %>%
+  pivot_wider(
+    names_from = type,
+    values_from = value
+  )
+```
+
+```{r}
+ggplot(de_TD_long, aes(x = TD_score, y = log2(NOISeq_expression), color = sample)) +
+  geom_point(size = 0.3) +
+  geom_smooth(method = 'lm', color = "black", linewidth = 0.3)
+```
+
+```{r}
+de_TD_long <- de_TD_long %>%
+  mutate(
+    facet_group = case_when(
+      sample == "bc01" & Sample_DE_up == "stress" ~ "bc01_only",
+      sample == "bc01" & Sample_DE_up %in% c("none", "control") ~ "bc01_others",
+      sample == "bc02" & Sample_DE_up == "control" ~ "bc02_only",
+      sample == "bc02" & Sample_DE_up %in% c("none", "stress") ~ "bc02_others"
+    )
+  )
+```
+
+```{r}
+library(dplyr)
+library(broom)
+
+# Fit models per facet group
+slopes <- de_TD_long %>%
+  group_by(facet_group) %>%
+  do(tidy(lm(log2(NOISeq_expression) ~ TD_score, data = .))) %>%
+  filter(term == "TD_score")
+
+# View slopes per facet
+print(slopes)
+# p-value is shown as 0, but that's actually just R rounding the value due to limitations in displaying very small numbers: it is <2e-16
+```
+
+```{r}
+# Create a combined model with interaction
+model <- lm(log2(NOISeq_expression) ~ TD_score * facet_group, data = de_TD_long)
+summary(model)
+```
+
+```{r}
+# Merge slopes with the main data
+de_TD_long <- de_TD_long %>%
+  left_join(slopes, by = "facet_group")
+```
+
+```{r}
+# Now plot with slope values
+ggplot(de_TD_long, aes(x = TD_score, y = log2(NOISeq_expression), color = sample)) +
+  geom_point(size = 0.3) +
+  geom_smooth(method = 'lm', color = "black", linewidth = 0.3) +  # lm = linear model
+  facet_wrap(~ facet_group, ncol = 2, 
+             labeller = labeller(facet_group = c("bc01_only" = "Genes upregulated in stress",
+                                                  "bc02_only" = "Genes upregulated in control",
+                                                  "bc01_others" = "not upregulated in stress",
+                                                  "bc02_others" = "not upregulated in control"
+                                                 ))) +
+  scale_color_manual(values = c("bc01" = "darkseagreen3", "bc02" = "palevioletred3"),
+                     labels = c(bc01 = "Stress", bc02 = "Control")) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(title = "Gene expression in relation to TD score",
+       subtitle = "Gene expression calculated and normalized between sample by NOISeq",
+       color = "Sample",
+       y = "NOISeq expression(log2)") +
+  geom_text(aes(x = Inf, y = Inf, label = paste("Slope = ", round(estimate, 2))),
+            data = slopes, inherit.aes = FALSE, 
+            hjust = 1.1, vjust = 1.5, color = "black", size = 4) +
+ theme(axis.title.x = element_text(size = 12), # Remove x-axis title
+       axis.text.y = element_text(size = 12),
+       axis.title = element_text(size = 12),
+       strip.text = element_text(size = 12),
+       legend.text = element_text(size = 12),
+       legend.position = "bottom") + 
+  guides(color = guide_legend(override.aes = list(size = 3)))  # Adjust size as needed
+
+
+
+```

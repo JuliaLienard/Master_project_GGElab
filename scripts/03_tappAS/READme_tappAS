@@ -1,0 +1,14 @@
+# Use of tappAS procedures - READme
+We want to be able to compare the two samples for the functional implication of the different transcript isoforms they express. 
+Transcriptomics data from both samples are merged after reads collapsing with Isoseq Collapse, using the tool TAMA merge. Then, the resulting merged transcriptome is processed with SqantiQC, to get the classification of the transcripts, wich have now the same ID for both samples. The SqantiQC classification and final annotation gff3 (tappAS format) obtained, will allow to be analyzed by tappAS. This tool requires a transcript expression matrix, which will be built using newly developed scripts.
+Summary of the steps:
+
+1) Tama formatting of the gtf files obtained after Isoseq Collapse into bed files
+2) Tama merge of the bed files for the two kinnex samples bc01 and bc02
+3) Tama formatting the obtained merged bed files into a merged gtf file
+4) SqantiQC
+5) Subsetting the data as tappAS does not handle large data set : 
+    - Filter_Highly_Express_transcripts.qmd
+    -  RefineFilter_tappASgff3_tamaTransReport.py
+6) using the filtered Tama merge "bc01_bc02_isocollapseTamamerged_trans_report.txt" file and the sqantiQC collapsed_XXX.abundance.tsv files, building of the transcript expression matrix with the developed script "transcript_expression_matrix_replicates.py"
+7) Analysis using tappAS

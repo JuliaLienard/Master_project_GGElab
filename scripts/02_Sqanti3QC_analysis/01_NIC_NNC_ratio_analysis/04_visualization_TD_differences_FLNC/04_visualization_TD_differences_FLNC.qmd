@@ -1,0 +1,621 @@
+---
+title: "Plot Transcription divergency (TD) differences"
+author: "Julia Lienard"
+format: pdf
+date-modified: last-modified
+editor: visual
+---
+
+The data from kinnex long read sequencing (MAS-ISO seq method) of the 2 samples (bc01 and bc02 for stressed and control conditions respectively) of human pancreatic beta cell (endoC-BetaH1) provided by Lorenzo Pasquali’s lab, were processed with the isoseq pipeline until isoseq cluster2 (<https://isoseq.how/getting-started.html>). Mapping of the reads were done against the human reference genome GRCh38.
+
+SqantiQC was run and the classification output files generated were first processed by the python scripts 01_Extract_stats_FL_classificationSQ_FLNC.py and then 02_Common_gene_classificationSQ_noRound_FLNC.py. The final output is the common genes identified between the 2 samples, for which a TD score (or RNA biological noise, RBN) has been calculated (bc01 TD score - bc02 TD score) and compared. This output file "bc01bc02common_genes_RBN_diff_FLNC.txt" generated with "02_Common_gene_classificationSQ_noRound_FLNC.py" is used here in this R script. output files from Sqanti3QC (classification.txt for this analysis can be found here: /home/jlienard/BetaCells_kinnex/04_sqantiQC/02_Using_GRCh38_mapping/output)
+
+## Loading packages and input files
+
+```{r}
+library(readr)
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+
+# loading bc01bc02common_genes_RBN_diff_FLNC.txt
+# it is the output from 02_Common_genes_classificationSQ_noRound_FLNC.py
+
+db_RBN_diff <- 
+  read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/02_Common_genes_classificationSQ_noRound_FLNC/02_output/bc01bc02common_genes_RBN_diff_FLNC.txt",
+             delim = "\t", 
+             escape_double = FALSE, 
+             trim_ws = TRUE)
+
+# Removing NA values for associated genes
+db_RBN_diff <- db_RBN_diff %>%
+  filter(!is.na(associated_gene))
+```
+
+## Plotting all genes
+
+```{r}
+# attributing a column for RBN differences between samples, 
+# focusing the difference of bc01 in comparison to bc02, 
+# i.e if the difference is higher or not in bc01 compared to bc02
+db_RBN_diff$Greater_in_bc01 <- ""
+db_RBN_diff$Greater_in_bc01[db_RBN_diff$RBN_Difference > 0] <- "yes"
+db_RBN_diff$Greater_in_bc01[db_RBN_diff$RBN_Difference < 0] <- "no"
+db_RBN_diff$Greater_in_bc01[db_RBN_diff$RBN_Difference == 0] <- "equal"
+
+```
+
+```{r}
+# Count total genes
+total_genes <- nrow(db_RBN_diff)
+```
+
+```{r,fig.width=10, fig.height=6, out.width='100%'}
+library(ggplot2)
+library(dplyr)
+
+# Count values for each category
+count_values <- db_RBN_diff %>%
+  count(Greater_in_bc01) 
+
+# Extract counts for "yes" and "no"
+count_yes <- count_values$n[count_values$Greater_in_bc01 == "yes"]
+count_no <- count_values$n[count_values$Greater_in_bc01 == "no"]
+count_equal <- count_values$n[count_values$Greater_in_bc01 == "equal"]
+
+# Replace NA with 0 if any category is missing
+count_yes <- ifelse(length(count_yes) == 0, 0, count_yes)
+count_no <- ifelse(length(count_no) == 0, 0, count_no)
+count_equal <- ifelse(length(count_equal) == 0, 0, count_equal)
+
+# Calculate percentages
+percent_yes <- round((count_yes / total_genes) * 100, 1)
+percent_no <- round((count_no / total_genes) * 100, 1)
+percent_equal <- round((count_equal / total_genes) * 100, 1)
+
+# Compute the y-position for annotation (half of the highest bar in 
+# the histogram)
+max_y <- max(ggplot_build(ggplot(db_RBN_diff, 
+                                 aes(x = RBN_Difference)) +
+                            geom_histogram(binwidth = 0.02))$data[[1]]$count)
+annotation_y <- max_y / 2  # Place text at 50% height of max bar
+
+# Create the histogram with centered annotations
+ggplot(db_RBN_diff, 
+       aes(x = RBN_Difference, 
+           fill = Greater_in_bc01)) + 
+  geom_histogram(binwidth = 0.02, 
+                 color = "black", 
+                 size = 0.2) +
+  geom_vline(xintercept = 0, 
+             linetype = "dashed", 
+             color = "white") +
+  scale_fill_manual(name = "",  # Change legend title
+                    values = c("yes" = "darkseagreen3", 
+                               "no" = "palevioletred3"), # Define colors
+    labels = c("yes" = "higher in treated cells", # Rename legend value)
+               "no" = "higher in control cells"))  +
+  theme_minimal() +
+  
+  # Centered text annotations
+  annotate("text", 
+           x = mean(range(
+             db_RBN_diff$RBN_Difference[db_RBN_diff$RBN_Difference > 0])), 
+           y = annotation_y, 
+           label = paste("Stress sample\n",
+                         count_yes, 
+                         " genes \n(", 
+                         percent_yes, "%)", 
+                         sep = ""), 
+           hjust = 0.5, size = 6, color = "darkseagreen4") + 
+  
+  annotate("text", x = mean(range(
+    db_RBN_diff$RBN_Difference[db_RBN_diff$RBN_Difference == 0])), 
+           y = annotation_y, 
+           label = paste( count_equal, 
+                          " genes \n(", 
+                          percent_equal, "%)", 
+                          sep = ""), 
+           hjust = 0.5, 
+    size = 4, 
+    color = "black") +
+  
+  annotate("text", 
+           x = mean(range(
+             db_RBN_diff$RBN_Difference[db_RBN_diff$RBN_Difference < 0])),
+           y = annotation_y, 
+           label = paste("Control sample\n", 
+                         count_no, " genes \n(", 
+                         percent_no, "%)", 
+                         sep = ""), 
+           hjust = 0.5, 
+           size = 6, 
+           color = "palevioletred4") +
+  labs(title = "Difference of Transcription divergency score between Kinnex samples", 
+       y= "Gene counts", 
+       x = paste0("Difference of TD score  (", total_genes, " genes)" )) +
+  theme(
+    legend.position = "bottom",  
+    legend.justification = "left",
+    axis.title = element_text(size = 16), 
+    axis.text = element_text(size = 14)
+  )
+```
+
+## Plotting only genes with a different TD score between samples
+
+```{r}
+# Filter dataset to keep only "yes" and "no"
+db_RBN_diff_filtered <- db_RBN_diff %>%
+  filter(Greater_in_bc01 %in% c("yes", "no"))
+
+list_chromosomes <- db_RBN_diff_filtered %>% 
+  distinct(chr) %>% 
+  pull(chr)
+
+# Filter dataset to remove chr GL000194 and GL000009.2
+db_RBN_diff_filtered <- db_RBN_diff_filtered %>%
+  filter(!(chr %in% c("GL000194.1", "GL000009.2")))
+
+# Count total genes in the filtered database
+total_genes_diff <- nrow(db_RBN_diff_filtered)
+
+
+# recount yes or no after the filtering of the two chromosomes
+count_values_diff <- db_RBN_diff_filtered %>%
+  count(Greater_in_bc01) 
+
+count_yes_filt <- count_values_diff$n[count_values_diff$Greater_in_bc01 == "yes"]
+count_no_filt <- count_values_diff$n[count_values_diff$Greater_in_bc01 == "no"]
+
+# Calculate percentages
+percent_yes_amongDiff <- round((count_yes_filt / total_genes_diff) * 100, 1)
+percent_no_amongDiff <- round((count_no_filt / total_genes_diff) * 100, 1)
+```
+
+```{r}
+# Compute the y-position for annotation (half of the highest bar in the histogram)
+max_y_diff <- max(ggplot_build(ggplot(db_RBN_diff_filtered, 
+                                 aes(x = RBN_Difference)) +
+                            geom_histogram(binwidth = 0.02))$data[[1]]$count)
+annotation_y_diff <- max_y_diff / 2  # Place text at 50% height of max bar
+
+# Create the histogram with centered annotations
+ggplot(db_RBN_diff_filtered, 
+       aes(x = RBN_Difference, fill = Greater_in_bc01)) + 
+  geom_histogram(binwidth = 0.02, color = "black", size = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "white") +
+  scale_fill_manual(name = "",  # Change legend title
+                    values = c("yes" = "darkseagreen3", 
+                               "no" = "palevioletred3"), # Define colors
+    labels = c("yes" = "Higher in treated cells", # Rename legend value)
+               "no" = "Higher in control cells"))  +
+  theme_minimal() +
+  
+  # Centered text annotations
+  annotate("text", x = mean(range(db_RBN_diff_filtered$RBN_Difference[db_RBN_diff_filtered$RBN_Difference > 0])), 
+           y = annotation_y_diff, 
+           label = paste("Stress sample\n",
+                         count_yes_filt, 
+                         " genes \n(", 
+                         percent_yes_amongDiff, "%)", 
+                         sep = ""), 
+           hjust = 0.5, size = 6, color = "darkseagreen4") + 
+  
+  annotate("text", x = mean(range(db_RBN_diff_filtered$RBN_Difference[db_RBN_diff_filtered$RBN_Difference < 0])),
+           y = annotation_y_diff, 
+           label = paste("Control sample\n", count_no_filt, " genes \n(", 
+                         percent_no_amongDiff, "%)", sep = ""), 
+           hjust = 0.5, size = 6, color = "palevioletred4") +
+  labs(title = "Difference of Transcription divergency\nscore between samples", 
+       y= "Gene counts", x = paste0("Difference of TD score  (", 
+                                    total_genes_diff, " genes)" )) +
+  theme(
+    legend.position = "bottom",  
+    legend.justification = "left",
+    plot.title = element_text(size = 16, 
+                              face = "bold"),
+    axis.title = element_text(size = 14), 
+    axis.text = element_text(size = 13)
+  )
+```
+
+## Plotting proportion of genes with TD diff per chromosome
+
+```{r,fig.width=7, fig.height=8, out.width='100%'}
+
+TD_per_chr <- db_RBN_diff %>%
+  filter(!(chr %in% c("GL000194.1", "GL000009.2", "MT"))) %>%
+  group_by(chr, Greater_in_bc01) %>%
+  summarise(gene_counts = n()) %>%
+  pivot_wider(names_from = "Greater_in_bc01", 
+              values_from = "gene_counts" ) %>%
+  mutate(perc_TDhigherStress = (yes) * 100 / (yes+no+equal),
+         perc_TDhigherControl = (no) * 100 / (yes+no+equal),
+         tot_gene_chr = yes+no+equal,
+         diff_perc = perc_TDhigherStress - perc_TDhigherControl)
+
+# Define chromosome order: Numbers (1-22) first, then X and Y
+chr_levels <- c(as.character(1:22), "X", "Y")
+
+TD_per_chr <- TD_per_chr %>%
+  mutate(chr = factor(chr, 
+                      levels = chr_levels, 
+                      ordered = TRUE))
+
+library(patchwork)
+library(ggplot2)
+# plot as bar
+plot_perc_TDhigherStress <- ggplot(TD_per_chr, 
+                                   aes(x = chr)) +
+  geom_col(aes(y = perc_TDhigherStress), 
+           fill = "steelblue", 
+           alpha = 0.6, 
+           width = 0.3) +
+   labs(title = " Proportion of genes with higher TD score in Stress",
+        y = "Genes (%)", x = "") +
+  theme(axis.text.x = element_text(size = 13),  # Adjust x-axis label size
+    axis.text.y = element_text(size = 13),  # Adjust y-axis label size
+    axis.title = element_text(size = 14),   # Adjust axis title size
+    plot.title = element_text(size = 16, face = "bold"))
+
+plot_perc_TDhigherControl <- ggplot(TD_per_chr, 
+                                    aes(x = chr)) +
+  geom_col(aes(y = perc_TDhigherControl), 
+           fill = "lightseagreen", 
+           alpha = 0.6, 
+           width = 0.3) +
+   labs(title = " Proportion of genes with higher TD score in Control",
+        y = "Genes (%)", x = "") +
+  theme(axis.text.x = element_text(size = 13),  # Adjust x-axis label size
+    axis.text.y = element_text(size = 13),  # Adjust y-axis label size
+    axis.title = element_text(size = 14),   # Adjust axis title size
+    plot.title = element_text(size = 16, face = "bold"))
+
+plot_tot_gene_chr <- ggplot(TD_per_chr, 
+                            aes(x = chr)) +
+  geom_col(aes(y = tot_gene_chr), 
+           fill = "darkgreen", 
+           alpha = 0.6, 
+           width = 0.3) +
+   labs(x = " chromosome", y = "Total Genes Counts") +
+  theme(axis.text.x = element_text(size = 13),  # Adjust x-axis label size
+    axis.text.y = element_text(size = 13),  # Adjust y-axis label size
+    axis.title = element_text(size = 14)   # Adjust axis title size
+    )
+
+plot_perc_TDhigherControl / plot_perc_TDhigherStress / plot_tot_gene_chr
+```
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Convert data to long format for plotting
+TD_per_chr_long <- TD_per_chr %>%
+  select(chr, perc_TDhigherStress, perc_TDhigherControl) %>%
+  pivot_longer(
+    cols = c(perc_TDhigherStress, perc_TDhigherControl),
+    names_to = "Condition",
+    values_to = "Percentage"
+  ) %>%
+  mutate(Condition = case_when(
+    Condition == "perc_TDhigherStress" ~ "Gene(%) with higher TD in Stress",
+    Condition == "perc_TDhigherControl" ~ "Gene(%) with higher TD in Control"
+  ))
+
+# Create the line plot
+ggplot(TD_per_chr_long, aes(x = chr, 
+                            y = Percentage, 
+                            group = Condition, color = Condition)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("palevioletred3", "darkseagreen3")) +
+  labs(
+    title = "Genes (%) with increased Transcription divergency score",
+    subtitle. = "by Chromosome and sample",
+    x = "Chromosome",
+    y = "Genes (%)",
+    color = ""
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major = element_line(color = "grey90"),
+    legend.position = "top",
+    plot.title = element_text(size = 16, face = "bold")
+  ) +
+  scale_x_discrete(limits = c(1:22, "X", "Y"))  # Ensure chromosome order
+
+```
+
+## Plotting TD difference per chromosome
+
+```{r}
+# check how many genes we have for each chromosome
+# Numbers of genes refer to gene where the RBN/TD value is different between the samples
+Genes_per_chr_diff <- db_RBN_diff_filtered %>% 
+  count(chr)
+```
+
+```{r,fig.width=8, fig.height=6, out.width='100%'}
+
+# Define chromosome order: Numbers (1-22) first, then X and Y
+chr_levels <- c(as.character(1:22), "X", "Y")
+
+# Convert chr column to an ordered factor
+db_RBN_diff_filtered <- db_RBN_diff_filtered %>%
+  mutate(chr = factor(chr, 
+                      levels = chr_levels, 
+                      ordered = TRUE))
+
+ggplot(db_RBN_diff_filtered, 
+       aes(x = RBN_Difference, 
+           fill = Greater_in_bc01)) +
+  geom_histogram(binwidth = 0.02, 
+                 color = "black", 
+                 size = 0.05) +
+  facet_wrap(~chr, scales = "free_y")+
+  geom_vline(xintercept = 0, 
+             linetype = "dashed", 
+             color = "black") +
+  scale_fill_manual(name = "",  # Changed legend title to nothing
+                    values = c("yes" = "darkseagreen3", # Defining colors
+                               "no" = "palevioletred3"), 
+    labels = c("yes" = "higher in treated cells", # Renaming legend value)
+               "no" = "higher in control cells")) +  
+  labs(title = "Difference of Transcription divergency score between Kinnex samples", 
+       subtitle = "Separated by chromosomes - equal TD score not shown",
+       y= "Gene counts", 
+       x = paste0(" Difference of TD score (", total_genes_diff, " genes)") ) +
+  theme(
+    legend.position = "bottom",  
+    legend.justification = "right"  
+  )
+```
+
+2\) add percentage gene counts on each facet graph
+
+```{r,fig.width=8, fig.height=6, out.width='100%'}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+
+# Count genes per category (yes/no) for each chromosome
+percent_values_per_chr <- db_RBN_diff_filtered %>%
+  group_by(chr, Greater_in_bc01) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  pivot_wider(names_from = Greater_in_bc01, 
+              values_from = count, 
+              values_fill = 0) %>%
+  rowwise() %>%
+  mutate(total_genes_diff = sum(c_across(yes:no), 
+                                na.rm = TRUE),
+         percent_yes_amongDiff_chr = 
+           round((yes / total_genes_diff) * 100, 1),
+         percent_no_amongDiff_chr = 
+           round((no / total_genes_diff) * 100, 1),
+         percent_label = 
+           paste0(percent_no_amongDiff_chr, "% / ", 
+                  percent_yes_amongDiff_chr, "%")) %>%
+  ungroup()
+
+# Create the plot
+ggplot(db_RBN_diff_filtered, 
+       aes(x = RBN_Difference, 
+           fill = Greater_in_bc01)) +
+  geom_histogram(binwidth = 0.02, 
+                 color = "black", 
+                 size = 0.05) +
+  facet_wrap(~chr, scales = "free_y") +
+  geom_vline(xintercept = 0, 
+             linetype = "dashed", 
+             color = "black") +
+  scale_fill_manual(name = "",  
+                    values = c("yes" = "darkseagreen3",  
+                               "no" = "palevioletred3"), 
+                    labels = c("yes" = "higher in treated cells",  
+                               "no" = "higher in control cells")) +  
+  labs(title = "Difference of RNA Biological Noise between Kinnex samples", 
+       subtitle = "Separated by chromosomes - equal RBN not shown", 
+       y = "Gene counts", 
+       x = paste0("Difference of RNA Biological Noise (", 
+                  total_genes_diff, " genes)")) +
+  theme(
+    legend.position = "bottom",  
+    legend.justification = "right"
+  ) +
+
+  # Add percentage annotation for each chromosome
+  geom_text(data = percent_values_per_chr, 
+            aes(x = max(db_RBN_diff_filtered$RBN_Difference, na.rm = TRUE) * 0.8, 
+                y = Inf, 
+                label = percent_label),
+            inherit.aes = FALSE, 
+            vjust = 2,
+            hjust = 1,
+            size = 2)
+```
+
+```{r,fig.width=8, fig.height=6, out.width='100%'}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Count genes per category (yes/no) for each chromosome
+percent_values_per_chr <- db_RBN_diff_filtered %>%
+  group_by(chr, Greater_in_bc01) %>%
+  summarise(count = n(), 
+            .groups = "drop") %>%
+  pivot_wider(names_from = Greater_in_bc01, 
+              values_from = count, 
+              values_fill = 0) %>%
+  rowwise() %>%
+  mutate(total_genesTD_chr = sum(c_across(yes:no), 
+                                 na.rm = TRUE),
+         percent_yes = round((yes / total_genesTD_chr) * 100, 1),
+         percent_no = round((no / total_genesTD_chr) * 100, 1)) %>%
+  ungroup()
+
+# Create the plot
+RBN_diff_chr <-
+ggplot(db_RBN_diff_filtered, 
+       aes(x = RBN_Difference, 
+           fill = Greater_in_bc01)) +
+  geom_histogram(binwidth = 0.02, 
+                 color = "black", 
+                 size = 0.05) +
+  facet_wrap(~ chr, 
+             scales = "free_y") +
+  geom_vline(xintercept = 0, 
+             linetype = "dashed", 
+             color = "black") +
+  scale_fill_manual(name = "",  
+                    values = c("yes" = "darkseagreen3",  
+                               "no" = "palevioletred3"), 
+                    labels = c("yes" = "higher in treated cells",  
+                               "no" = "higher in control cells")) +  
+  labs(title = "Difference of Transcript Divergency (TD) between Kinnex samples", 
+       subtitle = "Separated by chromosomes - equal TD score not shown", 
+       y = "Gene counts", 
+       x = paste0("Difference of TD score (", total_genes_diff, " genes)")) +
+  theme_bw() +
+  theme(
+    legend.position = "bottom",  
+    legend.justification = "right"
+  ) +
+
+  # Add percentage annotation for each chromosome
+  geom_text(data = percent_values_per_chr, 
+            aes(x = Inf, y = Inf, 
+                label = paste0(percent_yes, "%")),
+            inherit.aes = FALSE, 
+            vjust = 2,
+            hjust = 1,
+            size = 3,
+          color = "darkseagreen3",  
+          fontface = "bold") +
+
+  geom_text(data = percent_values_per_chr, 
+            aes(x = Inf, y = Inf, 
+                label = paste0(percent_no, "%")),
+            inherit.aes = FALSE, 
+            vjust = 2,
+            hjust = 4,
+            size = 3,
+            color = "palevioletred3",
+            fontface = "bold")
+print(RBN_diff_chr)
+```
+
+-   **`max(db_RBN_diff_filtered$RBN_Difference, na.rm = TRUE)`**:
+
+    -   This calculates the maximum value of the `RBN_Difference` column in the `db_RBN_diff_filtered` data frame. The `na.rm = TRUE` argument ensures that any `NA` values are ignored in the calculation.
+
+-   **`* 0.8`**:
+
+-   This multiplies the maximum `RBN_Difference` value by 0.8. The idea here is to place the text slightly to the left of the maximum value, so that the text doesn't appear right at the edge of the graph. By using `0.8`, you are placing the text at 80% of the maximum value of the `RBN_Difference`.
+
+    `aes(x = ...)` defines the x-position of the text, placing it near the right edge of the plot, but a bit off-center.
+
+-   <div>
+
+    ### **`aes(y = Inf)`**
+
+    </div>
+
+    -   **`y = Inf`**:
+
+        -   This specifies that the vertical position of the text should be at the top of the plot.
+
+        -   `Inf` is a special value in R that represents infinity, which, when used for the `y` aesthetic in `geom_text()`, places the text at the highest possible y-coordinate on the plot, ensuring the text is placed at the top of the graph.
+
+    So, the `y = Inf` part ensures that the text is positioned at the top edge of the plot, no matter what the y-axis values are.
+
+```{r}
+# create a new column for the difference between percentage of genes with higher RBN between samples
+percent_values_per_chr$diff_perc_highRBN <- 
+  percent_values_per_chr$percent_yes - percent_values_per_chr$percent_no
+
+# plot
+ggplot(data=percent_values_per_chr) +
+  geom_col(mapping = aes(x=diff_perc_highRBN, 
+                         y=chr), 
+           width = 0.5) +
+  scale_y_discrete(limits = rev(levels(percent_values_per_chr$chr))) + 
+  # Reverses the y-axis order
+  labs (title = "Difference of the proportion of genes with higher RBN value between samples",
+        y = " Chromosome", x = "Difference between proportions of genes with higher RBN")
+
+
+
+```
+
+```{r}
+# create another column of weighted difference where the number of genes per chromosome is taken into account to ensure than chromosomes with differences in gene numbers do not influence similarly
+
+# Numbers of genes refer to gene where the RBN value is different between the samples
+percent_values_per_chr$TD_contrib <- percent_values_per_chr$diff_perc_highRBN * percent_values_per_chr$total_genesTD_chr / total_genes_diff
+
+percent_values_per_chr$RBN_score_higher <- 
+  case_when(as.numeric(percent_values_per_chr$TD_contrib) > 0 ~ "stress", 
+            as.numeric(percent_values_per_chr$TD_contrib) < 0 ~ "control")
+
+# plot
+Diff_perc_per_chr <- ggplot(data=percent_values_per_chr) +
+  geom_col(mapping = aes(x=TD_contrib, y=chr, fill = RBN_score_higher), 
+           width = 0.3) +
+  scale_y_discrete(limits = rev(levels(percent_values_per_chr$chr))) + 
+  # Reverses the y-axis order
+  labs (title = "Relative and signed contribution of TD shift between samples",
+        caption="Net TD Contribution =
+        ((% genes of chromosome with higher RBN in stress - in control for each chromosome) * 
+        Nb genes per chromosome with diff TD ) / total number of genes with differences in TD",
+        y = " Chromosome", 
+        x = "Net TD Contribution (per chromosome)",
+        fill = "Samples") + xlim(-1.5,1.5) + 
+  geom_vline(xintercept = c(-0.5, 0.5),linetype="dotted")
+Diff_perc_per_chr
+```
+
+```{r,fig.width=5, fig.height=4, out.width='100%'}
+# Create table with total genes per chromosomes and number of genes with TD difference between samples
+
+# Convert chr column to an ordered factor
+Genes_per_chr_diff <- Genes_per_chr_diff %>%
+  mutate(chr = factor(chr, levels = chr_levels, ordered = TRUE))
+
+library(dplyr)
+geneTD_per_chr <- merge(Genes_per_chr_diff, 
+                        percent_values_per_chr, by = "chr") %>%
+  dplyr::select(chr, n, no, yes) %>%
+  rename(tot_gene = n,
+         TDhigherControl = no,
+         TDhigherstress = yes) 
+
+# Define chromosome order: Numbers (1-22) first, then X and Y
+chr_levels <- c(as.character(1:22), "X", "Y")
+
+geneTD_per_chr <- geneTD_per_chr %>%
+  arrange(chr) %>%
+  mutate(perc_geneChr_TDstress = TDhigherstress * 100 / tot_gene)
+
+library(ggplot2)
+
+library(forcats)
+geneTD_per_chr <- geneTD_per_chr %>%
+  mutate(chr = fct_rev(chr))  # reverse factor levels
+
+ggplot(geneTD_per_chr) +
+  geom_col(aes(x = chr, y = tot_gene)) +
+  labs(y = "Total annotated genes per chromosome",
+       x = "Chromosome") +
+  coord_flip()
+
+```

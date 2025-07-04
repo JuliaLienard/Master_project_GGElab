@@ -1,0 +1,230 @@
+---
+title: "Calculation of the TD (or RBN) score difference using R"
+author: "Julia Lienard"
+format: pdf
+date: 2025-02-27
+date-modified: last-modified
+editor: visual
+---
+
+This script is an alternative to the python scripts:
+
+-   [01_Extract_stats_FL_classificationSQ_FLNC.py](https://github.com/ConesaLab/documenting_NIH/blob/main/Julia/endoBcells/08_Sqanti3QC_analysis/NIC_NNC_ratio_analysis/01_Extract_stats_FL_classificationSQ.py "01_Extract_stats_FL_classificationSQ.py")
+
+-   [02_Common_genes_classificationSQ_noRound_FLNC.py](https://github.com/ConesaLab/documenting_NIH/blob/main/Julia/endoBcells/08_Sqanti3QC_analysis/NIC_NNC_ratio_analysis/02_Common_genes_classificationSQ.py "02_Common_genes_classificationSQ.py")
+
+to check that with an R script I obtained the same results for the TD (or RBN) calculation using the NIC/NNC ratio, which I did. Output from Sqanti3QC are used here and can found here: /home/jlienard/BetaCells_kinnex/04_sqantiQC/02_Using_GRCh38_mapping/output
+
+# 1-Loading libraries and data
+
+```{r}
+library(dplyr)
+library(readr)
+```
+
+```{r}
+# loading output from Sqanti-QC (GRCh38 ref genome used for mapping)
+# merged with correct FLNC counts
+
+# loading bc01_class_FLNC.txt
+bc01_class <- read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc01_class_FLNC.txt" , 
+                         delim = "\t", 
+                         escape_double = FALSE, 
+                         trim_ws = TRUE)
+
+# loading bc02_class_FLNC.txt
+bc02_class <- read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc02_class_FLNC.txt" , 
+                         delim = "\t", 
+                         escape_double = FALSE, 
+                         trim_ws = TRUE)
+```
+
+# 2-wrangling the data
+
+```{r}
+library(stringr)
+# filter bc01_class for keeping only the isoforms with no RT switching 
+# and the annotated genes :
+bc01_class_filt <- 
+  bc01_class %>% 
+  filter(RTS_stage == FALSE & !str_starts(associated_gene, "novelGene_"))
+
+bc02_class_filt <- 
+  bc02_class %>% 
+  filter(RTS_stage == FALSE & !str_starts(associated_gene, "novelGene_"))
+
+# filter out isoforms not FSM, NIC, NNC
+bc02_class_filt_2 <- 
+  bc02_class_filt %>% 
+  filter(structural_category %in% c("novel_not_in_catalog", 
+                                    "full-splice_match", 
+                                    "novel_in_catalog"))
+
+bc01_class_filt_2 <- bc01_class_filt %>% 
+  filter(structural_category %in% c("novel_not_in_catalog", 
+                                    "full-splice_match", "novel_in_catalog"))
+
+# adding sample origine before joining dataframes
+bc01_class_filt_2$sample <- "bc01"
+bc02_class_filt_2$sample <- "bc02"
+
+# join sample dataframes
+bc01_bc02_class_filt <- 
+  bind_rows(bc01_class_filt_2, bc02_class_filt_2)
+
+# export the filtered_combined table
+library(readr)
+
+# write table bc01bc02_classification_filt.tsv in analysis 
+write_tsv(bc01_bc02_class_filt, "../../../../analysis/01_NIC_NNC_ratio_analysis/03_NIC_NNC_ratio_using_R_FLNC/bc01bc02_classification_filt.tsv")
+```
+
+# 3-Calculation of TD score for all isoforms
+
+```{r}
+# Aggregate FL_count by gene
+bc01_bc02_class_filt_gp <- bc01_bc02_class_filt %>%
+  group_by(associated_gene, sample, structural_category ) %>%
+  summarise(FL_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop') 
+
+# pivot wider
+library(tidyverse)
+bc01_bc02_class_filt_gp_wide <- bc01_bc02_class_filt_gp %>%
+  pivot_wider(names_from = structural_category, 
+              values_from = "FL_sum", 
+              values_fill = list(FL_sum = 0) ) # replace NA values by zero
+```
+
+```{r}
+# calculate TD score ((NIC+NNC)/(FSM+NIC+NNC))
+bc01_bc02_class_filt_gp_wide <- bc01_bc02_class_filt_gp_wide %>%
+  mutate(TD = (novel_not_in_catalog + novel_in_catalog) / 
+           (novel_not_in_catalog + novel_in_catalog + `full-splice_match`))
+# total rows is 39756
+```
+
+```{r}
+# Keeping only the genes that are common between the 2 samples
+
+  # making a list of bc01 genes and a list of bc02 genes
+    # List of genes for bc01
+genes_bc01 <- bc01_bc02_class_filt_gp_wide %>%
+  filter(sample == "bc01") %>%
+  pull(associated_gene)
+
+    # List of genes for bc02
+genes_bc02 <- bc01_bc02_class_filt_gp_wide %>%
+  filter(sample == "bc02") %>%
+  pull(associated_gene)
+
+    # Find common genes
+common_genes <- intersect(genes_bc01, genes_bc02)
+
+  # Filtering bc01_bc02_class_filt_gp_wide with this list of common genes
+bc01_bc02_class_filt_gp_wide_common <- bc01_bc02_class_filt_gp_wide %>%
+  filter(associated_gene %in% common_genes)
+```
+
+```{r}
+# calculate TD_difference between the samples for each gene
+bc01_bc02_TD <- bc01_bc02_class_filt_gp_wide_common %>%
+  # Pivot longer and then wider to separate TD score values for bc01 and bc02
+  select(associated_gene, sample, TD) %>% # Keep only necessary columns
+  pivot_wider(names_from = sample, 
+              values_from = TD, 
+              names_prefix = "TD_")
+
+# calculate RBN_difference
+bc01_bc02_TD <- bc01_bc02_TD %>%
+  mutate(TD_diff = TD_bc01 - TD_bc02) 
+# neg values bc02 is higher, positive bc01 is higher
+
+higher_TD_bc01 <- bc01_bc02_TD %>% filter(TD_diff > 0) # 7362 genes
+higher_TD_bc02 <- bc01_bc02_TD %>% filter(TD_diff < 0) # 5936 genes
+```
+
+```{r}
+# export RBN_dif table
+library(readr)
+# write table TD_bc01bc02_results_FLNC.tsv in analysis
+write_tsv(bc01_bc02_TD, "../../../../analysis/01_NIC_NNC_ratio_analysis/03_NIC_NNC_ratio_using_R_FLNC/TD_bc01bc02_results_FLNC.tsv")
+```
+
+# 4- Calculation of TD score if keeping isoforms with more than 1 read
+
+```{r}
+# filtering out isoforms with only 1 read
+bc01_bc02_class_filt_FL <- 
+  bc01_bc02_class_filt %>% 
+  filter(FL > 1)
+```
+
+```{r}
+# Aggregate FL_count by gene
+bc01_bc02_class_filt_FL_gp <- bc01_bc02_class_filt_FL %>%
+  group_by(associated_gene, 
+           sample, 
+           structural_category ) %>%
+  summarise(FL_sum = sum(FLNC, 
+                         na.rm = TRUE), 
+            .groups = 'drop') 
+
+# pivot wider
+library(tidyverse)
+bc01_bc02_class_filt_FL_gp_wide <- 
+  bc01_bc02_class_filt_FL_gp %>%
+  pivot_wider(names_from = structural_category, 
+              values_from = "FL_sum", 
+              values_fill = list(FL_sum = 0) ) 
+                    # replace NA values by zero
+```
+
+```{r}
+# calculate TD score ((NIC+NNC)/(FSM+NIC+NNC))
+bc01_bc02_class_filt_FL_gp_wide <- 
+  bc01_bc02_class_filt_FL_gp_wide %>%
+  mutate(TD = (novel_not_in_catalog + novel_in_catalog) / 
+           (novel_not_in_catalog + novel_in_catalog + `full-splice_match`))
+# total rows is 23085
+```
+
+```{r}
+# Keeping only the genes that are common between the 2 samples
+
+  # making a list of bc01 genes and a list of bc02 genes
+    # List of genes for bc01
+genes_bc01_FL <- bc01_bc02_class_filt_FL_gp_wide %>%
+  filter(sample == "bc01") %>%
+  pull(associated_gene)
+
+    # List of genes for bc02
+genes_bc02_FL <- bc01_bc02_class_filt_FL_gp_wide %>%
+  filter(sample == "bc02") %>%
+  pull(associated_gene)
+
+    # Find common genes
+common_genes_FL <- intersect(genes_bc01_FL, genes_bc02_FL)
+
+  # Filtering bc01_bc02_class_filt_gp_wide with this list of common genes
+bc01_bc02_class_filt_FL_gp_wide_common <- 
+  bc01_bc02_class_filt_FL_gp_wide %>%
+  filter(associated_gene %in% common_genes_FL)
+```
+
+```{r}
+# calculate TD_difference between the samples for each gene
+bc01_bc02_TD_FL <- bc01_bc02_class_filt_FL_gp_wide_common %>%
+  # Pivot longer and then wider to separate TD score values for bc01 and bc02
+  select(associated_gene, sample, TD) %>% # Keep only necessary columns
+  pivot_wider(names_from = sample, 
+              values_from = TD, 
+              names_prefix = "TD_")
+
+# calculate RBN_difference
+bc01_bc02_TD_FL <- bc01_bc02_TD_FL %>%
+  mutate(TD_diff = TD_bc01 - TD_bc02) 
+# neg values bc02 is higher, positive bc01 is higher
+
+higher_TD_bc01_FL <- bc01_bc02_TD_FL %>% filter(TD_diff > 0) 
+higher_TD_bc02_FL <- bc01_bc02_TD_FL %>% filter(TD_diff < 0) 
+```

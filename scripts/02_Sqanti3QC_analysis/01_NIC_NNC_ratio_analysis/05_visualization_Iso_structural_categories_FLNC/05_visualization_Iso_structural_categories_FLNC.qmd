@@ -1,0 +1,796 @@
+---
+title: "Kinnex data - isoform structural characterization depending on the Transcription diversity (TD, or RBN) score"
+author: "Julia Lienard"
+date: 2025-02-19
+date-modified: last-modified
+format: pdf
+editor: visual
+---
+
+This script is called "05_visualization_Iso_structural_categories_FLNC.qmd" in the github ConesaLab.
+
+The data from kinnex long read sequencing (MAS-ISO seq method) of the 2 samples of human pancreatic beta cell (endoC-BetaH1, stressed or control, only 1 replicate for each condition, called respectively bc01 and bc02) provided by Lorenzo Pasquali's lab, were processed with the isoseq pipeline until isoseq cluster2 (<https://isoseq.how/getting-started.html>). Mapping of the reads were done against the human reference genome GRCh38.
+
+SqantiQC was run and the classification output files generated are used here to focus the analysis of genes showing a difference in Transcription diversity (TD), also called RNA biological noise (RBN), that is calculated by looking at the proportion of NIC+NNC isoforms among NIC+NNC+ FSM isoforms.
+
+## Import library
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+```
+
+## Loading input files
+
+```{r}
+# loading output from Sqanti-QC (GRCh38 ref genome used for mapping)
+bc01_class <- read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc01_class_FLNC.txt" , delim = "\t", escape_double = FALSE, trim_ws = TRUE)
+
+bc02_class <- read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc02_class_FLNC.txt" , delim = "\t", escape_double = FALSE, trim_ws = TRUE)
+
+```
+
+## Calculation of log2(TPM+1) as a value of isoform expression
+
+normalizing the read counts (TPM calculation) is common and is calculated as follow:
+
+> log2((FL_count/total_mapped_reads)\*10e6) +1)
+
+In SquantiQC report, the total_mapped_reads are the total FL_counts in the classification file.
+
+``` bash
+# checking by bash what to expect in terms of total FL counts
+cat collapsed_bc01.flnc_count.txt | grep -v "id" | awk -F "," '{sum += $2} END {print sum}'
+21222352
+
+cat collapsed_bc02.flnc_count.txt | grep -v "id" | awk -F "," '{sum += $2} END {print sum}'
+22579907
+```
+
+```{r}
+# sum of all FL in the classification file using R:
+bc01_tot_FL_count <- sum(bc01_class$FLNC, na.rm=T) # matches with the bash command results !
+bc02_tot_FL_count <- sum(bc02_class$FLNC, na.rm=T)
+
+# these numbers take into account annotated and novel genes.
+```
+
+# A - All associated genes
+
+## 1) Filter the classification files to exclude RT switching
+
+```{r}
+library(dplyr)
+library(stringr)
+
+# filter bc01_class or bc02_class to keep only the isoforms with no RT switching and label associated genes into annotated and novel genes :
+bc01_class_noRT <- bc01_class %>% filter(RTS_stage == FALSE)
+bc01_class_noRT$Gene <- "annotated"
+bc01_class_noRT <- bc01_class_noRT %>%
+  mutate(Gene = case_when(
+    str_starts(associated_gene, "novelGene_") ~ "novel",
+    TRUE ~ "annotated"  # Default to "annotated" if the condition is FALSE
+  ))
+
+
+bc02_class_noRT <- bc02_class %>% filter(RTS_stage == FALSE)
+bc02_class_noRT$Gene <- "annotated"
+bc02_class_noRT <- bc02_class_noRT %>%
+  mutate(Gene = case_when(
+    str_starts(associated_gene, "novelGene_") ~ "novel",
+    TRUE ~ "annotated"  # Default to "annotated" if the condition is FALSE
+  ))
+
+# adding sample origine before joining dataframes
+bc01_class_noRT$sample <- "bc01"
+bc02_class_noRT$sample <- "bc02"
+```
+
+## 2) Isoforms per gene
+
+### - bc01
+
+```{r}
+bc01_iso_perGene <- bc01_class_noRT %>%
+  filter(!is.na(associated_gene)) %>%
+  group_by(Gene, associated_gene) %>%
+  summarise(nb_iso = n_distinct(isoform), .groups = "drop") %>%
+  mutate(nb_iso_group = case_when(
+      nb_iso == 1 ~ "1",
+      nb_iso %in% c(2,3) ~ "2-3",
+      nb_iso %in% c(4,5) ~ "4-5",
+      nb_iso >= 6 ~ ">=6",
+  ))
+
+# Count all isoforms separated by iso group number, for either annotated or novel genes:
+bc01_counts_iso_perGene <- bc01_iso_perGene %>%
+  group_by(Gene, nb_iso_group) %>%
+  summarise(tot_Gene_iso_group = n_distinct(associated_gene))
+
+#Extract total number of annotated genes
+bc01_tot_annotated <- bc01_iso_perGene %>%
+  filter(Gene == "annotated") %>%
+  summarise(tot_annotated = n_distinct(associated_gene)) %>% 
+  pull(tot_annotated) %>%
+  as.numeric()
+
+#Extract total number of novel genes
+bc01_tot_novel <- bc01_iso_perGene %>%
+  filter(Gene == "novel") %>%
+  summarise(tot_novel = n_distinct(associated_gene)) %>% 
+  pull(tot_novel) %>%
+  as.numeric()
+
+# Calculate the percentage of each category number of the isoforms
+bc01_counts_iso_perGene <- bc01_counts_iso_perGene %>%
+  mutate(perc_gene_isogroup = tot_Gene_iso_group * 100 / case_when(
+      Gene == "annotated" ~ bc01_tot_annotated,
+      Gene == "novel" ~ bc01_tot_novel)
+  )
+
+# Define nb_iso_group order:
+gp_levels <- c("1", "2-3", "4-5", ">=6")
+
+bc01_counts_iso_perGene <- bc01_counts_iso_perGene %>%
+  mutate(nb_iso_group = factor(nb_iso_group, levels = gp_levels, ordered = TRUE))
+
+
+library(ggplot2)
+plot_bc01_iso_perGene <- ggplot(bc01_counts_iso_perGene) +
+  geom_col(aes(x = Gene, y = perc_gene_isogroup, fill = nb_iso_group), width = 0.5) +
+  labs(subtitle = "STRESS sample",
+       y = "Gene (%)", fill = "Isoforms\nper gene", x = "") +
+  scale_x_discrete(labels = c("annotated" = "annotated\ngenes", "novel" = "novel\ngenes")) +
+  theme(
+    axis.text.x = element_text(size = 13),  # Adjust x-axis label size
+    axis.text.y = element_text(size = 13),  # Adjust y-axis label size
+    axis.title = element_text(size = 14),   # Adjust axis title size
+    plot.title = element_text(size = 16, face = "bold"))  # Adjust title
+
+plot_bc01_iso_perGene
+```
+
+### - bc02
+
+```{r}
+bc02_iso_perGene <- bc02_class_noRT %>%
+  filter(!is.na(associated_gene)) %>%
+  group_by(Gene, associated_gene) %>%
+  summarise(nb_iso = n_distinct(isoform), .groups = "drop") %>%
+  mutate(nb_iso_group = case_when(
+      nb_iso == 1 ~ "1",
+      nb_iso %in% c(2,3) ~ "2-3",
+      nb_iso %in% c(4,5) ~ "4-5",
+      nb_iso >= 6 ~ ">=6",
+  ))
+
+# Count all isoforms separated by iso group number, for either annotated or novel genes:
+bc02_counts_iso_perGene <- bc02_iso_perGene %>%
+  group_by(Gene, nb_iso_group) %>%
+  summarise(tot_Gene_iso_group = n_distinct(associated_gene))
+
+#Extract total number of annotated genes
+bc02_tot_annotated <- bc02_iso_perGene %>%
+  filter(Gene == "annotated") %>%
+  summarise(tot_annotated = n_distinct(associated_gene)) %>% 
+  pull(tot_annotated) %>%
+  as.numeric()
+
+#Extract total number of novel genes
+bc02_tot_novel <- bc02_iso_perGene %>%
+  filter(Gene == "novel") %>%
+  summarise(tot_novel = n_distinct(associated_gene)) %>% 
+  pull(tot_novel) %>%
+  as.numeric()
+
+# Calculate the percentage of each category number of the isoforms
+bc02_counts_iso_perGene <- bc02_counts_iso_perGene %>%
+  mutate(perc_gene_isogroup = tot_Gene_iso_group * 100 / case_when(
+      Gene == "annotated" ~ bc02_tot_annotated,
+      Gene == "novel" ~ bc02_tot_novel)
+  )
+
+# Define nb_iso_group order:
+gp_levels <- c("1", "2-3", "4-5", ">=6")
+
+bc02_counts_iso_perGene <- bc02_counts_iso_perGene %>%
+  mutate(nb_iso_group = factor(nb_iso_group, levels = gp_levels, ordered = TRUE))
+
+
+library(ggplot2)
+plot_bc02_iso_perGene <- ggplot(bc02_counts_iso_perGene) +
+  geom_col(aes(x = Gene, y = perc_gene_isogroup, fill = nb_iso_group), width = 0.5) +
+  labs(title = "Number of isoforms per Gene",
+       subtitle = "CONTROL sample",
+       y = "Gene (%)", fill = "Isoforms\nper gene", x = "") +
+  scale_x_discrete(labels = c("annotated" = "annotated\ngenes", "novel" = "novel\ngenes")) +
+  theme(
+    axis.text.x = element_text(size = 13),  # Adjust x-axis label size
+    axis.text.y = element_text(size = 13),  # Adjust y-axis label size
+    axis.title = element_text(size = 14),   # Adjust axis title size
+    plot.title = element_text(size = 16, face = "bold"), # Adjust title
+    legend.position = "none")  
+
+plot_bc02_iso_perGene
+```
+
+Plot together
+
+```{r}
+library(patchwork)
+plot_bc02_iso_perGene + plot_bc01_iso_perGene
+```
+
+## 3) Structural categories
+
+#### a - Aggregate FL_count
+
+```{r}
+# Aggregate FLNC counts by gene, structural_category, Gene for each sample
+bc01_class_noRT_gp_gene_FL <- bc01_class_noRT %>%
+  group_by(associated_gene, structural_category, Gene) %>%
+  summarise(FLNC_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')  
+
+bc02_class_noRT_gp_gene_FL <- bc02_class_noRT %>%
+  group_by(associated_gene, structural_category, Gene) %>%
+  summarise(FLNC_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')
+
+# Get the number of associated genes: annotated or novel
+Nb_annotatedGenes_bc01 <- bc01_class_noRT_gp_gene_FL %>% filter(Gene == "annotated") %>% distinct(associated_gene) %>% pull(associated_gene)
+print(paste0(length(Nb_annotatedGenes_bc01), " annotated genes in bc01"))
+
+Nb_annotatedGenes_bc02 <- bc02_class_noRT_gp_gene_FL %>% filter(Gene == "annotated") %>% distinct(associated_gene) %>% pull(associated_gene)
+print(paste0(length(Nb_annotatedGenes_bc02), " annotated genes in bc02"))
+
+Nb_NovelGenes_bc01 <- bc01_class_noRT_gp_gene_FL %>% filter(Gene == "novel") %>% distinct(associated_gene) %>% pull(associated_gene)
+print(paste0(length(Nb_NovelGenes_bc01), " novel genes in bc01"))
+
+Nb_NovelGenes_bc02 <- bc02_class_noRT_gp_gene_FL %>% filter(Gene == "novel") %>% distinct(associated_gene) %>% pull(associated_gene)
+print(paste0(length(Nb_NovelGenes_bc02), " novel genes in bc02"))
+```
+
+#### b - Calculate CPM
+
+```{r}
+bc01_class_noRT_gp_gene_FL <- bc01_class_noRT_gp_gene_FL %>%
+  mutate(CPM = (FLNC_sum / bc01_tot_FL_count * 1e6))
+
+bc02_class_noRT_gp_gene_FL <- bc02_class_noRT_gp_gene_FL %>%
+  mutate(CPM = (FLNC_sum / bc02_tot_FL_count * 1e6))
+
+bc01_class_noRT_gp_gene_FL_counts <- bc01_class_noRT_gp_gene_FL %>%
+  group_by(structural_category, Gene) %>%
+  summarise(sum_totFLNC = sum(FLNC_sum),
+            sum_CPM = sum(CPM), .groups = 'drop') %>%
+  mutate(CPM_verif = (sum_totFLNC / bc01_tot_FL_count * 1e6)) # just checking here that calculating the CPM afterward or summing the CPM gives me the same results as expected!
+
+bc02_class_noRT_gp_gene_FL_counts <- bc02_class_noRT_gp_gene_FL %>%
+  group_by(structural_category, Gene) %>%
+  summarise(sum_totFLNC = sum(FLNC_sum),
+            sum_CPM = sum(CPM))
+```
+
+#### c - plot
+
+```{r}
+# check all unique structural categories
+unique(bc01_class_noRT_gp_gene_FL_counts$structural_category)
+```
+
+```{r}
+#| fig-width: 6
+#| fig-height: 7
+#| fig-align: center
+#| out-width: 100%
+
+# plot structural categories for each sample - TPM 
+
+Sample_Iso_bc01 <- ggplot(bc01_class_noRT_gp_gene_FL_counts, 
+                     aes(x = structural_category, y = sum_CPM/10000, fill = structural_category)) +
+  geom_bar(stat = "identity", position = "dodge") + # Use identity to plot TPM values +
+  facet_wrap(~ Gene, scale = "free_y",
+             labeller = labeller(Gene = c("annotated" = paste0("annotated genes (n=", length(Nb_annotatedGenes_bc01), ")"),
+                                          "novel" = paste0("novel genes (n=", length(Nb_NovelGenes_bc01), ")")))) +
+  labs(title = "Isoform structural categories",
+       subtitle = "STRESS sample",
+       x = "Structural category", y = "Reads - CPM (1e+04)", fill = "Structural\ncategory") +
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                                "incomplete-splice_match" = "#FC8D59", 
+                                "novel_in_catalog" = "#78C679", 
+                                "novel_not_in_catalog" = "#EE6A50", 
+                                "genic" = "#969696",
+                               "fusion"="goldenrod1",
+                               "intergenic" = "darksalmon",
+                               "antisense"="#66C2A4",
+                               "genic_intron"="#41B6C4"
+                               )) +
+  guides(fill = guide_legend(nrow = 3)) +
+ theme(axis.text.x = element_blank(),  # Remove x-axis labels
+        axis.ticks.x = element_blank(), # Remove x-axis ticks
+        axis.title.x = element_blank(),
+       axis.text.y = element_text(size = 12),
+       axis.title = element_text(size = 12),
+       plot.title = element_text(size = 14, face = "bold"),
+       strip.text = element_text(size = 12),
+       legend.position = "bottom") 
+
+Sample_Iso_bc02 <- ggplot(bc02_class_noRT_gp_gene_FL_counts, 
+                     aes(x = structural_category, y = sum_CPM/10000, fill = structural_category)) +
+  geom_bar(stat = "identity", position = "dodge") + # Use identity to plot TPM values +
+  facet_wrap(~ Gene, scale = "free_y",
+             labeller = labeller(Gene = c("annotated" = paste0("annotated genes (n=", length(Nb_annotatedGenes_bc02), ")"),
+                                          "novel" = paste0("novel genes (n=", length(Nb_NovelGenes_bc02), ")")))) +
+  labs(subtitle = "CONTROL sample",
+       x = "Structural category", y = "Reads - CPM (1e+04)", fill = "Structural category") +
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                                "incomplete-splice_match" = "#FC8D59", 
+                                "novel_in_catalog" = "#78C679", 
+                                "novel_not_in_catalog" = "#EE6A50", 
+                                "genic" = "#969696",
+                               "fusion"="goldenrod1",
+                               "intergenic" = "darksalmon",
+                               "antisense"="#66C2A4",
+                               "genic_intron"="#41B6C4"
+                               )) +
+ theme(axis.text.x = element_blank(),  # Remove x-axis labels
+        axis.ticks.x = element_blank(), # Remove x-axis ticks
+        axis.title.x = element_blank(), # Remove x-axis title
+       axis.text.y = element_text(size = 12),
+       axis.title = element_text(size = 12),
+       strip.text = element_text(size = 12),
+       legend.position = "none") 
+
+library(patchwork)
+
+# Combine Sample_Iso_bc01 and Sample_Iso_bc02 side by side
+combined_plot <- Sample_Iso_bc01 / Sample_Iso_bc02  # or use p1 / p2 for stacking vertically
+
+combined_plot
+```
+
+## 3) FSM subcategories
+
+#### a - Aggregate FL_count
+
+```{r}
+# Aggregate FL_count by gene, structural_category, sample, Gene
+bc01_class_noRT_gp_FSM_FL <- bc01_class_noRT %>%
+  filter(structural_category == "full-splice_match") %>%
+  group_by(associated_gene, subcategory, Gene) %>%
+  summarise(FLNC_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')  
+
+bc02_class_noRT_gp_FSM_FL <- bc02_class_noRT %>%
+  filter(structural_category == "full-splice_match") %>%
+  group_by(associated_gene, subcategory, Gene) %>%
+  summarise(FLNC_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')   
+```
+
+#### b - Calculate CPM
+
+```{r}
+bc01_class_noRT_gp_FSM_FL <- bc01_class_noRT_gp_FSM_FL %>%
+  mutate(CPM = (FLNC_sum / bc01_tot_FL_count * 1e6))
+
+bc02_class_noRT_gp_FSM_FL <- bc02_class_noRT_gp_FSM_FL %>%
+  mutate(CPM = (FLNC_sum / bc02_tot_FL_count * 1e6))
+```
+
+#### c - plot
+
+```{r}
+# check all unique structural categories
+unique(bc01_class_noRT_gp_FSM_FL$subcategory)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 6
+#| fig-align: center
+#| out-width: 100%
+
+# plot FSM subcategories for stress sample - TPM 
+
+library(tibble)
+# Compute the number of unique associated_gene values for each Gene category
+bc01geneFSM_counts <- bc01_class_noRT_gp_FSM_FL |>
+  summarise(n = n_distinct(associated_gene)) |>
+  deframe()  # Converts to a named vector
+
+bc01annotatedFSM_counts <- bc01_class_noRT_gp_FSM_FL |>
+  filter(Gene == "annotated") |>
+  summarise(n = n_distinct(associated_gene)) |>
+  deframe()  # Converts to a named vector
+
+bc01novelFSM_counts <- bc01_class_noRT_gp_FSM_FL |>
+  filter(Gene == "novel") |>
+  summarise(n = n_distinct(associated_gene)) |>
+  deframe()  # Converts to a named vector
+
+
+Sample_FSM_bc01 <- ggplot(bc01_class_noRT_gp_FSM_FL, 
+                     aes(x = subcategory, y = CPM, fill = subcategory)) +
+  geom_bar(stat = "identity", position = "dodge") + # Use identity to plot TPM values +
+  facet_wrap(~Gene, scale = "free_y",
+             labeller = labeller(Gene = c("annotated" = paste0("annotated (n=", bc01annotatedFSM_counts, ")"),
+                                          "novel" = paste0("novel (n=", bc01novelFSM_counts, ")")
+                                                       ))) +
+  labs(title = "FSM Isoform subcategories",
+       subtitle = paste0("Stress sample (",bc01geneFSM_counts, " genes)"),
+       x = "FSM subcategory", y = "Reads - CPM", fill = "subcategory") +
+  scale_fill_manual(values = c("alternative_3end"='#02314d',
+                   "alternative_3end5end"='#0e5a87',
+                   "alternative_5end"='#7ccdfc',
+                   "mono-exon" = "#cec2d2",
+                   'reference_match'='#c4e1f2')) +
+ theme(axis.text.x = element_blank(),  # Remove x-axis labels
+        axis.ticks.x = element_blank(), # Remove x-axis ticks
+        axis.title.x = element_blank()) # Remove x-axis title
+
+# plot FSM subcategories for control sample - TPM 
+
+# Compute the number of unique associated_gene values for each Gene category
+bc02geneFSM_counts <- bc02_class_noRT_gp_FSM_FL |>
+  summarise(n = n_distinct(associated_gene)) |>
+  deframe()  # Converts to a named vector
+
+bc02annotatedFSM_counts <- bc02_class_noRT_gp_FSM_FL |>
+  filter(Gene == "annotated") |>
+  summarise(n = n_distinct(associated_gene)) |>
+  deframe()  # Converts to a named vector
+
+bc02novelFSM_counts <- bc02_class_noRT_gp_FSM_FL |>
+  filter(Gene == "novel") |>
+  summarise(n = n_distinct(associated_gene)) |>
+  deframe()  # Converts to a named vector
+
+
+Sample_FSM_bc02 <- ggplot(bc02_class_noRT_gp_FSM_FL, 
+                     aes(x = subcategory, y = CPM, fill = subcategory)) +
+  geom_bar(stat = "identity", position = "dodge") + # Use identity to plot TPM values +
+  facet_wrap(~Gene, scale = "free_y",
+             labeller = labeller(Gene = c("annotated" = paste0("annotated (n=", bc02annotatedFSM_counts, ")"),
+                                          "novel" = paste0("novel (n=", bc02novelFSM_counts, ")")
+                                                       ))) +
+  labs(
+       subtitle = paste0("Control sample (",bc02geneFSM_counts, " genes)"),
+       x = "FSM subcategory", y = "Reads - CPM", fill = "subcategory") +
+  scale_fill_manual(values = c("alternative_3end"='#02314d',
+                   "alternative_3end5end"='#0e5a87',
+                   "alternative_5end"='#7ccdfc',
+                   "mono-exon" = "#cec2d2",
+                   'reference_match'='#c4e1f2')) +
+ theme(axis.text.x = element_blank(),  # Remove x-axis labels
+        axis.ticks.x = element_blank(), # Remove x-axis ticks
+        axis.title.x = element_blank(),
+       legend.position = "none") # Remove x-axis title
+  
+# Combine Sample_Iso_bc01 and Sample_Iso_bc02 side by side
+combined_plot_FSM <- Sample_FSM_bc01 / Sample_FSM_bc02  # or use p1 / p2 for stacking vertically
+
+combined_plot_FSM
+```
+
+```{r}
+# MONO-EXON FILTERED OUT
+# plot FSM subcategories for stress sample - TPM 
+
+# Compute the number of unique associated_gene values for each Gene category
+bc01geneFSM_NoMonoExon_counts <- bc01_class_noRT_gp_FSM_FL |>
+  filter(subcategory != "mono-exon") |>
+  summarise(n = n_distinct(associated_gene)) |>
+  deframe()  # Converts to a named vector
+
+Sample_FSM_NoMonoExon_bc01 <- ggplot(filter(bc01_class_noRT_gp_FSM_FL, subcategory != "mono-exon"),
+                     aes(x = subcategory, y = CPM, fill = subcategory)) +
+  geom_bar(stat = "identity", position = "dodge") + # Use identity to plot TPM values +
+  labs(title = "FSM Isoform subcategories - mono-exon excluded",
+       subtitle = paste0("Stress sample (",bc01geneFSM_NoMonoExon_counts, " genes)"),
+       x = "FSM subcategory", y = "Reads - CPM", fill = "subcategory") +
+  scale_fill_manual(values = c("alternative_3end"='#02314d',
+                   "alternative_3end5end"='#0e5a87',
+                   "alternative_5end"='#7ccdfc',
+                   'reference_match'='#c4e1f2')) +
+ theme(axis.text.x = element_blank(),  # Remove x-axis labels
+        axis.ticks.x = element_blank(), # Remove x-axis ticks
+        axis.title.x = element_blank()) # Remove x-axis title
+
+# plot FSM subcategories for control sample - TPM 
+
+# Compute the number of unique associated_gene values for each Gene category
+bc02geneFSM_NoMonoExon_counts <- bc02_class_noRT_gp_FSM_FL |>
+  filter(subcategory != "mono-exon") |>
+  summarise(n = n_distinct(associated_gene)) |>
+  deframe()  # Converts to a named vector
+
+Sample_FSM_NoMonoExon_bc02 <- ggplot(filter(bc02_class_noRT_gp_FSM_FL, subcategory != "mono-exon"), 
+                     aes(x = subcategory, y = CPM, fill = subcategory)) +
+  geom_bar(stat = "identity", position = "dodge") + # Use identity to plot TPM values +
+  labs(
+       subtitle = paste0("Control sample (",bc02geneFSM_NoMonoExon_counts, " genes)"),
+       x = "FSM subcategory", y = "Reads - CPM", fill = "subcategory") +
+  scale_fill_manual(values = c("alternative_3end"='#02314d',
+                   "alternative_3end5end"='#0e5a87',
+                   "alternative_5end"='#7ccdfc',
+                   'reference_match'='#c4e1f2')) +
+ theme(axis.text.x = element_blank(),  # Remove x-axis labels
+        axis.ticks.x = element_blank(), # Remove x-axis ticks
+        axis.title.x = element_blank(),
+       legend.position = "none") # Remove x-axis title
+  
+# Combine Sample_Iso_bc01 and Sample_Iso_bc02 side by side
+combined_plot_FSM_NoMonoExon <- Sample_FSM_NoMonoExon_bc01 / Sample_FSM_NoMonoExon_bc02  # or use p1 / p2 for stacking vertically
+
+combined_plot_FSM_NoMonoExon
+```
+
+# B - Annotated genes - structural categories and TD
+
+## 1) Filter the classification files to exclude RT switching and novel genes
+
+```{r}
+# filter bc01_class or bc02_class to keep only the isoforms with no RT switching and only annotated genes :
+bc01_class_filt <- bc01_class %>% filter(RTS_stage == FALSE & !str_starts(associated_gene, "novelGene_"))
+
+bc02_class_filt <- bc02_class %>% filter(RTS_stage == FALSE & !str_starts(associated_gene, "novelGene_"))
+
+# adding sample origine before joining dataframes
+bc01_class_filt$sample <- "bc01"
+bc02_class_filt$sample <- "bc02"
+
+# joining
+all_bc01bc02_class <- bind_rows(bc01_class_filt, bc02_class_filt)
+```
+
+## 2) Structural categories
+
+#### a - Aggregate FL_count
+
+```{r}
+# Aggregate FL_count by gene, structural_category, sample 
+all_bc01bc02_class_gp_gene_FL <- all_bc01bc02_class %>%
+  group_by(associated_gene, structural_category, sample) %>%
+  summarise(FLNC_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop')  
+```
+
+#### b - pivot wider
+
+```{r}
+# pivoting wider the dataframe
+library(tidyr)
+all_bc01bc02_class_gp_gene_FL_wide <- tidyr::pivot_wider(all_bc01bc02_class_gp_gene_FL, names_from = "structural_category", values_from = "FLNC_sum", values_fill = list(FLNC_sum = 0))
+```
+
+#### c - Replace NA values by zero -not sure is necessary !
+
+```{r}
+# replace NA values by zero
+library(dplyr)
+
+all_bc01bc02_class_gp_gene_FL_wide <- 
+  all_bc01bc02_class_gp_gene_FL_wide %>%
+  dplyr::mutate(across(where(is.numeric), ~tidyr::replace_na(.x, 0)))
+```
+
+#### d - Merge with TD score table
+
+```{r}
+# load table
+TD_score <- read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/03_NIC_NNC_ratio_using_R_FLNC/TD_bc01bc02_results_FLNC.tsv" , delim = "\t", escape_double = FALSE, trim_ws = TRUE)
+
+# pivot longer
+TD_score_long <- pivot_longer(TD_score, cols =c(TD_bc01, TD_bc02), names_to = "sample", values_to = "TD")
+
+# rename varibles of sample
+TD_score_long <- TD_score_long %>%
+  dplyr::mutate(sample = recode(sample,
+                         "TD_bc01" = "bc01",
+                         "TD_bc02" = "bc02"))
+
+# merge TD_score_long with all_bc01bc02_class_gp_gene_FL_wide
+all_bc01bc02_class_gp_gene_FL_wide_TD <- inner_join(TD_score_long, all_bc01bc02_class_gp_gene_FL_wide, by = c("associated_gene", "sample"))
+```
+
+#### e - split in 3 RBN_diff categories
+
+```{r}
+# depending on the TD_diff, create a TD_diff_category variable:
+all_bc01bc02_class_gp_gene_FL_wide_TD <- all_bc01bc02_class_gp_gene_FL_wide_TD %>%
+  mutate(TD_diff_category = (case_when(TD_diff > 0 ~ ">TDbc01",
+                                       TD_diff < 0 ~ ">TDbc02",
+                                       TD_diff == 0 ~ "NullTD")))
+
+# pivot longer to stack the different FL_counts of the structural categories
+all_bc01bc02_class_gp_gene_FL_long_TD <- all_bc01bc02_class_gp_gene_FL_wide_TD %>%
+  pivot_longer(cols = `full-splice_match`:fusion,  # Specify the range of columns to pivot
+               names_to = "structural_category",  # New column for the category names
+               values_to = "FLNC_count")  # New column for the values
+
+# Create new column with percentages
+all_bc01bc02_class_gp_gene_FL_long_TD <- all_bc01bc02_class_gp_gene_FL_long_TD %>%
+  group_by(associated_gene, sample) %>%  # Group by gene and sample
+  mutate(Total_FLNC_sum = sum(FLNC_count),  # Compute total FL_sum per gene & sample
+         perc_struct_cat = (FLNC_count / Total_FLNC_sum) * 100) %>%  # Calculate percentage
+  ungroup()  # Remove grouping after computation
+```
+
+```{r}
+# Count the number of unique associated_gene for each TD_diff_category
+count_TD_categories <- all_bc01bc02_class_gp_gene_FL_long_TD %>%
+  filter(TD_diff_category %in% c("NullTD", ">TDbc01", ">TDbc02")) %>%
+  group_by(TD_diff_category) %>%
+  summarize(count = n_distinct(associated_gene))
+
+# Print the result
+count_TD_categories
+
+```
+
+#### i - plotting
+
+```{r}
+# check all unique structural categories
+unique(all_bc01bc02_class_gp_gene_FL_long_TD$structural_category)
+
+```
+
+```{r}
+# plot structural categories for each sample
+Sample_Iso <- ggplot(all_bc01bc02_class_gp_gene_FL_long_TD) +
+  geom_boxplot(mapping = aes(x = sample, y = perc_struct_cat, fill = structural_category), outlier.size = 0.5) +
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                                "incomplete-splice_match" = "#FC8D59", 
+                                "novel_in_catalog" = "#78C679", 
+                                "novel_not_in_catalog" = "#EE6A50", 
+                                "genic" = "#969696", "fusion"="goldenrod1")) +
+  labs(title = "Isoform structural categories",
+       subtitle = "Annotated genes",
+       x = "", y = "Reads per gene (%)", fill = "Structural\ncategory") +
+  scale_x_discrete(labels = c(bc01 = "STRESS\nsample",
+                               bc02 = "CONTROL\nsample")) +
+  theme(axis.text.x = element_text(size = 13),  # Adjust x-axis label size
+    axis.text.y = element_text(size = 13),  # Adjust y-axis label size
+    axis.title = element_text(size = 14),   # Adjust axis title size
+    plot.title = element_text(size = 16, face = "bold"))  # Adjust title)
+
+Sample_Iso
+```
+
+```{r}
+# plotting proportion of structural categories depending on the TD_diff score for the two samples
+perc_categ_TD <- ggplot(all_bc01bc02_class_gp_gene_FL_long_TD) +
+  geom_boxplot(mapping = aes(x = sample, y = perc_struct_cat, fill = structural_category), outlier.size = 0.5)+ 
+  facet_wrap(~TD_diff_category,
+             labeller = labeller(TD_diff_category = c(">TDbc02" = "TD higher in control",
+                                                       ">TDbc01" = "TD higher in stress",
+                                                       "NullTD" = "Similar TD"))) +
+  theme(legend.position = "bottom") +
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                                "incomplete-splice_match" = "#FC8D59", 
+                                "novel_in_catalog" = "#78C679", 
+                                "novel_not_in_catalog" = "#EE6A50", 
+                                "genic" = "#969696", "fusion"="goldenrod1")) +
+  labs(title = "Isoform structural categories depending on TD differences",
+       x = "Isoform structural categories", y = "FL reads per gene (%)") +
+  scale_x_discrete(labels = c("bc01" = "stress", "bc02" = "control"))
+
+perc_categ_TD
+```
+
+```{r}
+# plotting proportion of structural categories depending on the RBN_diff score for the two samples
+perc_categ_TD_v2 <- ggplot(filter(all_bc01bc02_class_gp_gene_FL_long_TD, TD_diff_category != "NullTD")) +
+  geom_boxplot(mapping = aes(x = sample, y = perc_struct_cat, fill = structural_category), outlier.size = 0.5) + 
+  facet_wrap(~TD_diff_category,
+             labeller = labeller(TD_diff_category = c(">TDbc02" = "TD higher in bc02",
+                                                       ">TDbc01" = "TD higher in bc01"))) +  # Removed NullTD label
+  theme(legend.position = "bottom") +
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                               "incomplete-splice_match" = "#FC8D59", 
+                               "novel_in_catalog" = "#78C679", 
+                               "novel_not_in_catalog" = "#EE6A50", 
+                               "genic" = "#969696","fusion"="goldenrod1")) +
+  labs(title = "Isoform structural categories depending on TD differences",
+       x = "Samples", y = "FL reads per gene (%)") +
+  scale_x_discrete(labels = c("bc01" = "stress", "bc02" = "control"))
+
+perc_categ_TD_v2
+```
+
+```{r}
+perc_categ_TD_v3 <- ggplot(filter(all_bc01bc02_class_gp_gene_FL_long_TD, TD_diff_category != "NullTD")) +
+  geom_boxplot(mapping = aes(x = sample, 
+                             y = perc_struct_cat, 
+                             fill = structural_category),
+               outlier.size = 0.5) + 
+  facet_wrap(~structural_category + TD_diff_category, 
+             labeller = labeller(
+               TD_diff_category = c(">TDbc02" = "TD higher in bc02",
+                                     ">TDbc01" = "TD higher in bc01")),
+             scales = "free_y") +  # Allow different y-axis scales for each category
+  theme(legend.position = "bottom") +
+  scale_fill_manual(values = c("full-splice_match" = "#6BAED6", 
+                               "incomplete-splice_match" = "#FC8D59", 
+                               "novel_in_catalog" = "#78C679", 
+                               "novel_not_in_catalog" = "#EE6A50", 
+                               "genic" = "#969696", "fusion"="goldenrod1")) +
+  labs(title = "Isoform structural categories depending on TD differences",
+       x = "Sample", y = "FL reads (%)") +
+  scale_x_discrete(labels = c("bc01" = "stress", "bc02" = "control"))
+
+perc_categ_TD_v3
+
+```
+
+## 3) Plot the FSM subcategories
+
+```{r}
+# filter only FSM isoforms
+all_bc01bc02_class_FSM <- all_bc01bc02_class %>% dplyr::filter(structural_category == "full-splice_match")
+
+# Aggregate FL_count by gene, structural_category, sample 
+all_bc01bc02_class_FSM_gp_gene_FL <- all_bc01bc02_class_FSM %>%
+  dplyr::group_by(associated_gene, subcategory, sample) %>%
+  dplyr::summarise(FLNC_sum = sum(FLNC, na.rm = TRUE), .groups = 'drop') 
+
+all_bc01bc02_class_FSM_gp_gene_wide <- tidyr::pivot_wider(all_bc01bc02_class_FSM_gp_gene_FL, names_from = "subcategory", values_from = "FLNC_sum", values_fill = list(FLNC_sum = 0))
+```
+
+```{r}
+# merge TD_score_long with all_bc01bc02_class_FSM_gp_gene_wide
+all_bc01bc02_class_FSM_gp_gene_wide_TD <- inner_join(TD_score_long, all_bc01bc02_class_FSM_gp_gene_wide, by = c("associated_gene", "sample"))
+```
+
+```{r}
+# depending on the TD_diff, create a TD_diff_category variable:
+all_bc01bc02_class_FSM_gp_gene_wide_TD <- all_bc01bc02_class_FSM_gp_gene_wide_TD %>%
+  mutate(TD_diff_category = (case_when(TD_diff > 0 ~ ">TDbc01",
+                                       TD_diff < 0 ~ ">TDbc02",
+                                       TD_diff == 0 ~ "NullTD")))
+
+# pivot longer to stack the different FL_counts of the structural categories
+all_bc01bc02_class_FSM_gp_gene_long_TD <- all_bc01bc02_class_FSM_gp_gene_wide_TD %>%
+  pivot_longer(cols = `mono-exon`:reference_match,  # Specify the range of columns to pivot  
+               names_to = "subcategory",  # New column for the category names
+               values_to = "FLNC_count")  # New column for the values
+
+# Create new column with percentages
+all_bc01bc02_class_FSM_gp_gene_long_TD <- all_bc01bc02_class_FSM_gp_gene_long_TD %>%
+  group_by(associated_gene, sample) %>%  # Group by gene and sample
+  mutate(Total_FLNC_sum = sum(FLNC_count),  # Compute total FL_sum per gene & sample
+         perc_FSMsub = (FLNC_count / Total_FLNC_sum) * 100) %>%  # Calculate percentage
+  ungroup()  # Remove grouping after computation
+```
+
+```{r}
+# Count the number of unique associated_gene for each TD_diff_category
+count_TD_FSMcategories <- all_bc01bc02_class_FSM_gp_gene_long_TD %>%
+  filter(TD_diff_category %in% c("NullTD", ">TDbc01", ">TDbc02")) %>%
+  group_by(TD_diff_category) %>%
+  summarize(count = n_distinct(associated_gene))
+
+# Print the result
+count_TD_FSMcategories
+
+```
+
+```{r}
+# check all unique structural categories
+unique(all_bc01bc02_class_FSM_gp_gene_long_TD$subcategory)
+```
+
+```{r}
+# plot FSM subcategories for each sample
+Sample_FSM <- ggplot(all_bc01bc02_class_FSM_gp_gene_long_TD) +
+  geom_boxplot(mapping = aes(x = sample, y = perc_FSMsub, fill = subcategory), outlier.size = 0.5) +
+  scale_fill_manual(values = c("alternative_3end"='#02314d',
+                   "alternative_3end5end"='#0e5a87',
+                   "alternative_5end"='#7ccdfc',
+                   "mono-exon" = "#cec2d2",
+                   'reference_match'='#c4e1f2')) +
+  labs(title = "FSM isoform subcategories",
+       x = "Samples", y = "FL reads per gene (%)") +
+  scale_x_discrete(labels = c("bc01" = "stress", "bc02" = "control"))
+
+Sample_FSM
+```

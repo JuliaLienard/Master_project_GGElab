@@ -1,0 +1,12 @@
+# READme Filter_data
+
+tappAS cannot handle large data set and therefore the kinnex data need to be filtered. The data are subsetted by keeping 100 top DEGs (based on NOISeq analysis), 2000 no DEGS with high expression, and for each DEG, only the 10 most abundant transcripts.
+
+This step subsets the data from SqantiQC/IsoAnnotLite(gff3) of the data (bc01 and bc02) merged with TAMA merge, before the use of tappAS, which does not work with the full Kinnex data set.
+
+1) the python script "transcription_expression_matrix_replicates.py" is used first on the full data set after having run TAMA and Sqanti3QC to get a first table called "bc01_bc02_ALLGENES_FLNC_tama_PacBio_ID_FL.txt"
+2) "bc01_bc02_ALLGENES__FLNC_tama_PacBio_ID_FL.txt" as well as the Sq3QC classification files of TAMA merged data are used with "Filter_Highly_Express_transcripts_FLNC.qmd". 
+This script needs a list of genes "top2000_NOT_DEGs_and_top100_DEGs_neoantigens_list.txt" (found in the current folder) that I chose (2000 no DEGS and 100 top DEGs) using NOIseq analysis (these 2100 genes are selected with the R qmd script "NOISeq_Kinnex_verif_FLNC.qmd" found under folder Differential expression analysis.
+A list of the data subset of TAMA isoforms ID for only the selected genes is output by Filter_Highly_Express_transcripts_FLNC.qmd and called "Merged_highTrans_ID_FILT10Genes2000_list_FLNC.txt"
+3) "Merged_highTrans_ID_FILT10Genes2000_list.txt" is used with "RefineFilter_tappASgff3_tamaTransReport.py" to filter the tappAS compatible gff3 (obtained by isoInnotLite) for the subsets of isoforms, as well as the tama merge <prefix>_trans_report.txt.
+4) "transcript_expression_matrix_replicates_FLNC.py" is used again, but this time on the filtered tama merge <prefix>_trans_report.txt to generate a transcript expression matrix needed for tappAS
