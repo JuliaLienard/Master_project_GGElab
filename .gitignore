@@ -1,0 +1,5 @@
+00_raw_data/
+analysis/
+*.html
+._files/
+*.pdf
