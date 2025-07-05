@@ -1,6 +1,6 @@
 00_raw_data/
 analysis/
 *.html
-*._files/
+*_files/
 *.pdf
 .DS_Store
