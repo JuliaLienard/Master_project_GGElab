@@ -3,3 +3,4 @@ analysis/
 *.html
 *._files/
 *.pdf
+.DS_Store
