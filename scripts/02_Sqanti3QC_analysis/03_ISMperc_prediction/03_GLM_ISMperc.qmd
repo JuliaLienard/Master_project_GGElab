@@ -7,6 +7,8 @@ date-modified: last-modified
 editor: visual
 ---
 
+This part comes after preparing the data using 02b_TUSCOpancreas_ISM_Dataprep.qmd. Here we want to predict the ISM transcripts (%) using the TUSCO genes, to detect an increased ISM proportion for some genes that could correspond to TD.
+
 # Import libraries
 
 ```{r}
@@ -21,6 +23,7 @@ library(ggplot2)
 
 ```{r}
 # loading the list of BUGSI genes
+# bugsi_genes_list.txt
 TUSCO_strict <- read_csv("../../../00_raw_data/TUSCO/bugsi_genes_list.txt", 
                              col_names = FALSE)
 
@@ -33,6 +36,7 @@ TUSCO_strict <- TUSCO_strict %>%
 print(paste0(nrow(TUSCO_strict), " TUSCO strict genes loaded"))
 
 # import pancreas specific TUSCO genes
+# tusco_human_pancreas.tsv
 library(readr)
 TUSCO_pancreas <- read_delim("../../../00_raw_data/TUSCO/tusco_human_pancreas.tsv", 
     delim = "\t", 
@@ -63,6 +67,8 @@ BUSCO_pancreasTUSCO_list <- TUSCO_strict_pancreas %>%
 ## - SqQC formatted data
 
 ```{r}
+# loading Data_format_ISM_model.csv 
+# (output from 02b_TUSCOpancreas_ISM_Dataprep)
 Data_ISM_predictors <- read_csv("../../../analysis/03_ISMperc_prediction/02b_TUSCOpancreas_ISM_Dataprep/Data_format_ISM_model.csv")
 ```
 
@@ -158,7 +164,7 @@ ggplot(Data_ISM_predictors_TUSCO) +
   labs(title = "GC(%) of transcripts for TUSCO Selected Genes",
        y = "Density",
        x = "GC(%)",
-       subtitle = "weighted by FL counts (green)") 
+       subtitle = "weighted by FL counts (pink)") 
 ```
 
 ```{r}
@@ -350,7 +356,7 @@ ggplot(Data_ISM_predictors_TUSCO_posISM_TL9000,
         axis.text = element_text(size = 10))
 ```
 
-It suggests here that if using the predictor of number of exons, we should subset the TUSCO data by removing genes with less than 2 exons.
+It suggests here that if using the predictor of number of exons, we should use a transformed predictor.
 
 ### - GC(%)
 
@@ -482,15 +488,13 @@ It means here that predictors could be combined to improve the model if needed.
 
 # **2. GLM building (**subset1: ISM \> 0, transcript \> 9000 nu)
 
-GLM model is better than the linear since ISM is expressed in percentages and thus, the model will bound the ISM values between 0 an 100, compared to linear models than calculates any value. It is particularly suitted when proportions are based on counts, which is the case here as FL counts were used to calculate ISM_perc.
+GLM model is better than the linear since ISM is expressed in percentages and thus, the model will bound the ISM values between 0 an 100, compared to linear models than calculates any value. It is particularly suited when proportions are based on counts, which is the case here as FL counts were used to calculate ISM_perc.
 
 binomial is used here as we have either ISM counts or no ISM counts, used for **Proportion data**.
 
 `"logit"` is the most common link for binomial GLMs. = *logistic regression*
 
 The model will predicts the **log-odds** of success as a linear function of your predictors. Link connects the linear predictor (the sum of the model coefficients and variables) to the expected value of the response.
-
-What Are Log-Odds?
 
 -   **Odds** are a way of expressing the chance of something happening versus it not happening.
 
@@ -508,7 +512,7 @@ What Are Log-Odds?
 
 -   In logistic regression (and your GLM), the model predicts the **log-odds** of success, not the probability directly.
 
-In Everyday Terms
+More simply, it means that
 
 -   **Probability** is the chance of something happening (from 0 to 1).
 

@@ -1,6 +1,6 @@
 # Use of tappAS procedures - READme
 We want to be able to compare the two samples for the functional implication of the different transcript isoforms they express. 
-Transcriptomics data from both samples are merged after reads collapsing with Isoseq Collapse, using the tool TAMA merge. Then, the resulting merged transcriptome is processed with SqantiQC, to get the classification of the transcripts, wich have now the same ID for both samples. The SqantiQC classification and final annotation gff3 (tappAS format) obtained, will allow to be analyzed by tappAS. This tool requires a transcript expression matrix, which will be built using newly developed scripts.
+Transcriptomics data from both samples are merged after reads collapsing with Isoseq Collapse, using the tool TAMA merge. Then, the resulting merged transcriptome is processed with SqantiQC, to get the classification of the transcripts, which have now the same ID for both samples. The SqantiQC classification and final annotation gff3 (tappAS format) obtained, will allow to be analyzed by tappAS. This tool requires a transcript expression matrix, which will be built using newly developed scripts.
 Summary of the steps:
 
 1) Tama formatting of the gtf files obtained after Isoseq Collapse into bed files
@@ -8,7 +8,22 @@ Summary of the steps:
 3) Tama formatting the obtained merged bed files into a merged gtf file
 4) SqantiQC
 5) Subsetting the data as tappAS does not handle large data set : 
-    - Filter_Highly_Express_transcripts.qmd
+    - 
+    - Filter_Highly_Express_transcripts_FLNC.qmd
     -  RefineFilter_tappASgff3_tamaTransReport.py
 6) using the filtered Tama merge "bc01_bc02_isocollapseTamamerged_trans_report.txt" file and the sqantiQC collapsed_XXX.abundance.tsv files, building of the transcript expression matrix with the developed script "transcript_expression_matrix_replicates.py"
 7) Analysis using tappAS
+
+The detailed steps of 5 are as follow:
+
+As tappAS cannot handle large data set, the kinnex data need to be filtered. The data are subsetted by keeping 100 top DEGs, 2000 no DEGS with high expression, and for each DEG, only the 10 most abundant transcripts. This step subsets the data from SqantiQC/IsoAnnotLite(gff3) of the data (bc01 and bc02) merged with TAMA merge, before the use of tappAS, which does not work with the full Kinnex data set.
+
+A) the python script "transcription_expression_matrix_replicates_FLNC.py" is used first on the full data set after having run TAMA and Sqanti3QC to get a first table called "bc01_bc02_ALLGENES_FLNC_tama_PacBio_ID_FL.txt"
+
+B) "bc01_bc02_ALLGENES_FLNC_tama_PacBio_ID_FL.txt" as well as the Sq3QC classification files of TAMA merged data are used with "Filter_Highly_Express_transcripts_FLNC.qmd". This script needs a list of genes " top2000_NOT_DEGs_and_top100_DEGs_list_FLNC.txt " that I chose (2000 no DEGS and 100 top DEGs) using NOIseq analysis (these 2100 genes are selected with the R qmd script "NOISeq_Kinnex_verif_FLNC.qmd" found under folder Differential expression analysis. The list of neoantigens has been manually added, to get “top2000_NOT_DEGs_and_top100_DEGs_neoantigens_list_FLNC.txt”. A list of the data subset of TAMA isoforms ID for only the selected genes is output by Filter_Highly_Express_transcripts_FLNC.qmd and called "Merged_highTrans_ID_FILT10Genes2000_list_FLNC.txt" 
+
+C) "Merged_highTrans_ID_FILT10Genes2000_list_FLNC.txt" is used with "RefineFilter_tappASgff3_tamaTransReport.py" to filter the tappAS compatible gff3 (obtained by IsoAnnotLite) for the subsets of isoforms, as well as the tama merge <prefix>_trans_report.txt. 
+
+D)"transcript_expression_matrix_replicates_FLNC.py" is used again, but this time on the filtered tama merge <prefix>_trans_report.txt to generate a transcript expression matrix needed for tappAS
+
+There is a image of the pipeline illustrating theses steps that is provided.

@@ -3,13 +3,15 @@ title: "NOIseq differential expression analysis of pancreatic beta cells RNAseq 
 author: "Julia Lienard"
 date: 2025-02-27
 date-modified: last-modified
-format: html
+format: pdf
 editor: visual
 ---
 
 The data from kinnex long read sequencing (MAS-ISO seq method) of the 2 samples of human pancreatic beta cell (endoC-BetaH1) provided by Lorenzo Pasquali's lab, were processed with the isoseq pipeline until isoseq cluster2 (<https://isoseq.how/getting-started.html>). Mapping of the reads were done against the human reference genome GRCh38.
 
-SqantiQC was run and the classification output files (found here: /home/jlienard/BetaCells_kinnex/04_sqantiQC/02_Using_GRCh38_mapping/output), merged with proper FLNC counts (using the script 00_Merge_SqQCclass_FLcounts.R) are used here to extract FL counts for each gene and built an expression matrix with the two samples (endoC-BetaH1 stressed or control, only 1 replicate for each condition, called respectively bc01 and bc02). The matrix is analysed to identify genes upregulated in stressed cells or in control cells and see whether the genes with higher TD (or RBN) in stressed cells are genes upregulated or not compared to control cells.
+SqantiQC was run and the classification output files (found here: /home/jlienard/BetaCells_kinnex/\\
+
+04_sqantiQC/02_Using_GRCh38_mapping/output), merged with proper FLNC counts (using the script 00_Merge_SqQCclass_FLcounts.R) are used here to extract FL counts for each gene and built an expression matrix with the two samples (endoC-BetaH1 stressed or control, only 1 replicate for each condition, called respectively bc01 and bc02). The matrix is analysed to identify genes upregulated in stressed cells or in control cells and see whether the genes with higher TD (or RBN) in stressed cells are genes upregulated or not compared to control cells.
 
 As there is only 1 replicate for each condition, the use of DESeq2 or EdgeR was not possible. **NOISeq is the best option** for no-replicate RNA-seq data.
 
@@ -21,9 +23,13 @@ library(dplyr)
 ```
 
 ```{r}
-# loading output from Sqanti-QC (GRCh38 ref genome used for mapping) merged with isoCollapse flcn_count.txt file (using 00_Merge_SqQCclass_FLcounts.R)
+# loading output from Sqanti-QC (GRCh38 ref genome used for mapping) 
+# merged with isoCollapse flcn_count.txt file (using 00_Merge_SqQCclass_FLcounts.R)
+
+# bc01_class_FLNC.txt
 bc01_class <- read_delim("../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc01_class_FLNC.txt" , delim = "\t", escape_double = FALSE, trim_ws = TRUE)
 
+# bc02_class_FLNC.txt
 bc02_class <- read_delim("../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc02_class_FLNC.txt" , delim = "\t", escape_double = FALSE, trim_ws = TRUE)
 ```
 
@@ -32,7 +38,8 @@ bc02_class <- read_delim("../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_S
 ```{r}
 # Checking my numbers
 # sum of all FL in the classification file using R:
-bc01_tot_FL_count <- sum(bc01_class$FLNC, na.rm=T) # matches with the bash command results !
+bc01_tot_FL_count <- sum(bc01_class$FLNC, na.rm=T) 
+
 bc02_tot_FL_count <- sum(bc02_class$FLNC, na.rm=T)
 ```
 

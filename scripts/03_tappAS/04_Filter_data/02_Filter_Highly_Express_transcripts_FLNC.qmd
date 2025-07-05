@@ -3,31 +3,40 @@ title: "Keeping only the highest expressed transcripts"
 author: "Julia Lienard"
 date: 2025-05-22
 date-modified: last-modified
-format: html
+format: pdf
 editor: visual
 ---
 
 This script wrangles the data to extract the TAMA isoform ID corresponding to a subset of genes selected for downstream use of tappAS for the two Kinnex pancreatic beta cell samples.
 
-Import data
+# Import data
 
 The input data are:
 
-a table generated with the script transcript_expression_matrix_replicates_FLNC.py using no filtering of the Sqanti3QC data (with bc01_bc02_isocollapseTamamerged). bc01_bc02_ALLGENES_FLNC_tama_PacBio_ID_FL.txt is a table that connects the tama isoform ID after merging to the original PacBio (PB) isoform id of each sample, as well as the corresponding correct FL counts.
+-   a table generated with the script transcript_expression_matrix_replicates_FLNC.py using no filtering of the Sqanti3QC data (with bc01_bc02_isocollapseTamamerged). bc01_bc02_ALLGENES_FLNC_tama_PacBio_ID_FL.txt is a table that connects the tama isoform ID after merging to the original PacBio (PB) isoform id of each sample, as well as the corresponding correct FL counts.
 
-the classification of the isoforms obtained by running SqQC on the tama_merged data
+-   the classification of the isoforms obtained by running SqQC on the tama_merged data
 
-{r}
+```{r}
 library(readr)
-tama_trans_report_PBcounts <- read.delim("../02_build_transcript_expression_matrix/bc01_bc02_ALLGENES_FLNC_tama_PacBio_ID_FL.txt", sep = "\t")
 
-SqQC_class_TamaMerged <- read.delim("bc01_bc02_isocollapseTamamerged_classification.txt", sep = "\t")
+# load bc01_bc02_ALLGENES_FLNC_tama_PacBio_ID_FL.txt
+tama_trans_report_PBcounts <- 
+  read.delim("../../../analysis/tappAS/01_build_transcript_expression_matrix_ALL/bc01_bc02_ALLGENES_FLNC_tama_PacBio_ID_FL.txt", 
+             sep = "\t")
 
-Make list of transcripts for each sample
+# load bc01_bc02_isocollapseTamamerged_classification.txt
+# output from SqQC on the tama merged data
+SqQC_class_TamaMerged <- 
+  read.delim("../../../00_raw_data/TamaMerge/SqantiQC/bc01_bc02_isocollapseTamamerged_classification.txt", 
+                                    sep = "\t")
+```
 
-=> bc01_bc02_ALLGENES_FLNC_tama_PacBio_ID_FL.txt is parsed to collect for each sample the complete list of tama isoform ID (and corresponding PB id + fl counts)
+# Make list of transcripts for each sample
 
-{r}
+=\> bc01_bc02_ALLGENES_FLNC_tama_PacBio_ID_FL.txt is parsed to collect for each sample the complete list of tama isoform ID (and corresponding PB id + fl counts)
+
+```{r}
 library(dplyr)
 
 # filter Tama transcript report to keep only TAMA trans ID for sample bc01 (stress)
@@ -43,62 +52,88 @@ bc02_flcounts <- tama_trans_report_PBcounts %>%
 # Extract as a list of TAMA trans ID for each sample:
 bc01_trans_list <- bc01_flcounts %>% pull(tama_id)
 bc02_trans_list <- bc02_flcounts %>% pull(tama_id)
+```
 
-Split SqQC_class file per sample
+# Split SqQC_class file per sample
 
-{r}
+```{r}
 # Filter classification file to keep only transcripts expresssed by each sample
-SqQC_class_TamaMerged_bc01 <- SqQC_class_TamaMerged %>% filter(isoform %in% bc01_trans_list)
+SqQC_class_TamaMerged_bc01 <- SqQC_class_TamaMerged %>% 
+  filter(isoform %in% bc01_trans_list)
 
-SqQC_class_TamaMerged_bc02 <- SqQC_class_TamaMerged %>% filter(isoform %in% bc02_trans_list)
+SqQC_class_TamaMerged_bc02 <- SqQC_class_TamaMerged %>% 
+  filter(isoform %in% bc02_trans_list)
+```
 
-{r}
+```{r}
 # Merging with the fl counts data frame
 SqQC_class_TamaMerged_bc01 <- SqQC_class_TamaMerged_bc01 %>%
   rename(tama_id = isoform)
 SqQC_class_TamaMerged_bc02 <- SqQC_class_TamaMerged_bc02 %>%
   rename(tama_id = isoform)
 
-SqQC_class_TamaMerged_bc01_FLcounts <- inner_join(SqQC_class_TamaMerged_bc01, bc01_flcounts, by = "tama_id")
+SqQC_class_TamaMerged_bc01_FLcounts <- 
+  inner_join(SqQC_class_TamaMerged_bc01, bc01_flcounts, by = "tama_id")
 
-SqQC_class_TamaMerged_bc02_FLcounts <- inner_join(SqQC_class_TamaMerged_bc02, bc02_flcounts, by = "tama_id")
+SqQC_class_TamaMerged_bc02_FLcounts <- 
+  inner_join(SqQC_class_TamaMerged_bc02, bc02_flcounts, by = "tama_id")
+```
 
-Select only the 10 most highly expressed transcripts + selected DEGS/no DEGS (NOISeq quarto document)
+# Select only the 10 most highly expressed transcripts + selected DEGS/no DEGS (NOISeq quarto document)
 
-Using Julia/endoBcells/02_Sqanti3QC_analysis/02_Differential_expression_analysis/NOISeq_Kinnex_verif_FLNC.qmd in github ConesaLab, the list of the 100 top differentially expressed genes (DEGs) and 2000 highly expressed no DEGS (+ the 9 neoantigens encoding genes that can be found Julia/endoBcells/02_Sqanti3QC_analysis/01_NIC_NNC_ratio_analysis/Focus_on_neoantigens/neoantigens_list.txt) were selected as a list of genes that we upload here: top2000_NOT_DEGs_and_top100_DEGs_neoantigens_list_FLNC.txt (the list output from NOISeq_Kinnex_verif_FLNC.qmd is completed manually with the list of the 9 neoantigen from neoantigens_list.txt.
+Using NOISeq_Kinnex_verif_FLNC.qmd on:
 
-{r}
-SqQC_class_TamaMerged_bc01_FLcounts_FILT10 <- SqQC_class_TamaMerged_bc01_FLcounts %>%
+Julia/endoBcells/02_Sqanti3QC_analysis/02_Differential_expression_analysis/ in github ConesaLab, the list of the 100 top differentially expressed genes (DEGs) and 2000 highly expressed no DEGS (+ the 9 neoantigens encoding genes that can be created and also found here: Julia/endoBcells/02_Sqanti3QC_analysis/01_NIC_NNC_ratio_analysis/Focus_on_neoantigens/neoantigens_list.txt) were selected as a list of genes that we upload here: top2000_NOT_DEGs_and_top100_DEGs_neoantigens_list_FLNC.txt (the list output from NOISeq_Kinnex_verif_FLNC.qmd is completed manually with the list of the 9 neoantigen from neoantigens_list.txt.
+
+```{r}
+SqQC_class_TamaMerged_bc01_FLcounts_FILT10 <- 
+  SqQC_class_TamaMerged_bc01_FLcounts %>%
   filter(RTS_stage == FALSE & associated_gene != "") %>%
   group_by(associated_gene) %>%
-  arrange(desc(fl_count_bc01)) %>%                 # Sort by ranking, highest first
+  arrange(desc(fl_count_bc01)) %>%  # Sort by ranking, highest first
   slice_head(n = 10) %>%
   ungroup() %>%
   filter(associated_gene != "")
 
-SqQC_class_TamaMerged_bc02_FLcounts_FILT10 <- SqQC_class_TamaMerged_bc02_FLcounts %>%
+SqQC_class_TamaMerged_bc02_FLcounts_FILT10 <- 
+  SqQC_class_TamaMerged_bc02_FLcounts %>%
   filter(RTS_stage == FALSE & associated_gene != "") %>%
   group_by(associated_gene) %>%
-  arrange(desc(fl_count_bc02)) %>%                 # Sort by ranking, highest first
+  arrange(desc(fl_count_bc02)) %>% # Sort by ranking, highest first
   slice_head(n = 10) %>%
   ungroup() 
 
 # LOAD gene list
-Gene2000 <- read.delim("../top2000_NOT_DEGs_and_top100_DEGs_neoantigens_list_FLNC.txt", sep = "\t")
+# top2000_NOT_DEGs_and_top100_DEGs_neoantigens_list_FLNC.txt
+Gene2000 <- 
+  read.delim("../../../analysis/02_Differential_expression_analysis/top2000_NOT_DEGs_and_top100_DEGs_neoantigens_list_FLNC.txt", 
+             sep = "\t")
 Gene2000 <- Gene2000[[1]]
 
 # Filter to keep only the genes from the selection
-SqQC_class_TamaMerged_bc01_FLcounts_FILT10 <- SqQC_class_TamaMerged_bc01_FLcounts_FILT10 %>% filter(associated_gene %in% Gene2000)
+SqQC_class_TamaMerged_bc01_FLcounts_FILT10 <- 
+  SqQC_class_TamaMerged_bc01_FLcounts_FILT10 %>% 
+  filter(associated_gene %in% Gene2000)
 
-SqQC_class_TamaMerged_bc02_FLcounts_FILT10 <- SqQC_class_TamaMerged_bc02_FLcounts_FILT10 %>% filter(associated_gene %in% Gene2000)
+SqQC_class_TamaMerged_bc02_FLcounts_FILT10 <- 
+  SqQC_class_TamaMerged_bc02_FLcounts_FILT10 %>% 
+  filter(associated_gene %in% Gene2000)
+```
 
-{r}
+```{r}
 # Create list of transcript IDs that were selected as the 5 most expressed per gene
-bc01_highTrans_ID_list_FILT10 <- SqQC_class_TamaMerged_bc01_FLcounts_FILT10 %>% pull(tama_id)
-bc02_highTrans_ID_list_FILT10 <- SqQC_class_TamaMerged_bc02_FLcounts_FILT10 %>% pull(tama_id)
+bc01_highTrans_ID_list_FILT10 <- 
+  SqQC_class_TamaMerged_bc01_FLcounts_FILT10 %>% 
+  pull(tama_id)
+
+bc02_highTrans_ID_list_FILT10 <- 
+  SqQC_class_TamaMerged_bc02_FLcounts_FILT10 %>% 
+  pull(tama_id)
 
 # Merge both lists and take out duplicates
-Common_highTrans_ID_list_FILT10Genes2000 <- union(bc01_highTrans_ID_list_FILT10,bc02_highTrans_ID_list_FILT10)
+Common_highTrans_ID_list_FILT10Genes2000 <- 
+  union(bc01_highTrans_ID_list_FILT10,bc02_highTrans_ID_list_FILT10)
 
 # Export the list of the corresponding tama isoform ID to these about 2100 genes:
 writeLines(Common_highTrans_ID_list_FILT10Genes2000, "Merged_highTrans_ID_FILT10Genes2000_list_FLNC.txt")
+```

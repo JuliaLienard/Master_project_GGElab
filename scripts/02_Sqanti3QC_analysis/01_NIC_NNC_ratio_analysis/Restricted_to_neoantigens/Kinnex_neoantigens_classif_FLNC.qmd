@@ -3,15 +3,15 @@ title: "Kinnex data - neoantigens isoform structural characterization"
 author: "Julia Lienard"
 date: 2025-02-19
 date-modified: last-modified
-format: html
+format: pdf
 editor: visual
 ---
 
 The data from kinnex long read sequencing (MAS-ISO seq method) of the 2 samples of human pancreatic beta cell (endoC-BetaH1) provided by Lorenzo Pasquali's lab, were processed with the isoseq pipeline until isoseq cluster2. Mapping of the reads were done against the human reference genome GRCh38.
 
-SqantiQC was run and the classification output files (found here: /home/jlienard/BetaCells_kinnex/04_sqantiQC/\\
+SqantiQC was run and the classification output files (found here: /home/jlienard/BetaCells_kinnex/\\
 
-02_Using_GRCh38_mapping/output) generated are used here (prior merging with correct FLNC counts using 00_Merge_SqQCclass_FLcounts.R ) to focus the analysis of genes encoding known autoantigens encoding genes during type I diabetes: list of neoantigens provided based on the literature (and editable if needed) to filter the classification files.
+04_sqantiQC/02_Using_GRCh38_mapping/output) generated are used here (prior merging with correct FLNC counts using 00_Merge_SqQCclass_FLcounts.R ) to focus the analysis of genes encoding known autoantigens encoding genes during type I diabetes: list of neoantigens provided based on the literature (and editable if needed) to filter the classification files.
 
 ## Import library
 
@@ -38,15 +38,17 @@ bc02_class <- read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/00_Merg
                          escape_double = FALSE, 
                          trim_ws = TRUE)
 
-neoantigen <- read_delim(file = "../../../../00_raw_data/neoantigens_list.txt", 
+# load neoantigens_list.txt
+neoantigen <- 
+  read_delim(file = "../../../../00_raw_data/neoantigens_list.txt", 
                          delim = "\t",
                          col_names = FALSE)
 # names of the neoantigen-encoding genes should be the one used in the human reference annotation
 ```
 
-## Calculation of log2(TPM+1) as a value of isoform expression
+## Calculation of log2(CPM+1) as a value of isoform expression
 
-normalizing the read counts (TPM calculation). It is calculated in SqantiQC as follow:
+normalizing the read counts (CPM calculation). It is calculated in SqantiQC as follow:
 
 > log2((FL_count/bc01_mapped_reads)\*10e6) +1)
 
@@ -411,7 +413,7 @@ ggplot(data = filter(all_neoantigen_class_totFLgene,
 
 ### 2) FL and structural category: Group by gene and sample
 
-Creating a subdataframe where data are grouped by gene, `structural_category` and `sample`, before making the calculation of TPM and log2(TPM + 1).
+Creating a sub-dataframe where data are grouped by gene, `structural_category` and `sample`, before making the calculation of CPM and log2(CPM + 1).
 
 ```{r}
 library(dplyr)
@@ -466,7 +468,7 @@ FSM_expression
 #| out-width: 100%
 
 # plot expression for FSM no log2 transfo
-FSM_expressionTPM <- ggplot(filter(all_neoantigen_class_gp_by_gene, 
+FSM_expressionCPM <- ggplot(filter(all_neoantigen_class_gp_by_gene, 
                                    structural_category == "full-splice_match")) +
   geom_col(mapping = aes(x=sample, 
                          y=CPM, 
@@ -480,7 +482,7 @@ FSM_expressionTPM <- ggplot(filter(all_neoantigen_class_gp_by_gene,
   theme(legend.position = "none",
         axis.text.x = element_text(angle = 45, hjust = 1))
 
-FSM_expressionTPM
+FSM_expressionCPM
 
 #ggsave("neoantigen_FSM_expressionTPM.png", FSM_expressionTPM)
 ```

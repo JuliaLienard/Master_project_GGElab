@@ -3,7 +3,7 @@ title: "Kinnex data - isoform structural characterization depending on the Trans
 author: "Julia Lienard"
 date: 2025-02-19
 date-modified: last-modified
-format: pdf
+format: html
 editor: visual
 ---
 
@@ -11,7 +11,7 @@ This script is called "05_visualization_Iso_structural_categories_FLNC.qmd" in t
 
 The data from kinnex long read sequencing (MAS-ISO seq method) of the 2 samples of human pancreatic beta cell (endoC-BetaH1, stressed or control, only 1 replicate for each condition, called respectively bc01 and bc02) provided by Lorenzo Pasquali's lab, were processed with the isoseq pipeline until isoseq cluster2 (<https://isoseq.how/getting-started.html>). Mapping of the reads were done against the human reference genome GRCh38.
 
-SqantiQC was run and the classification output files generated are used here to focus the analysis of genes showing a difference in Transcription diversity (TD), also called RNA biological noise (RBN), that is calculated by looking at the proportion of NIC+NNC isoforms among NIC+NNC+ FSM isoforms.
+SqantiQC was run and the classification output files generated are used here, after being merged with correct FLNC counts (from the flnc_counts.txt from IsoSeq Collapse). It focuses on the analysis of genes showing a difference in Transcription diversity (TD), also called RNA biological noise (RBN), that is calculated by looking at the proportion of NIC+NNC isoforms among NIC+NNC+ FSM isoforms.
 
 ## Import library
 
@@ -25,19 +25,21 @@ library(ggplot2)
 
 ```{r}
 # loading output from Sqanti-QC (GRCh38 ref genome used for mapping)
+# loading 00_Merge_SqQCclass_FLcounts/bc01_class_FLNC.txt
 bc01_class <- read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc01_class_FLNC.txt" , delim = "\t", escape_double = FALSE, trim_ws = TRUE)
 
+# loading 00_Merge_SqQCclass_FLcounts/bc02_class_FLNC.txt
 bc02_class <- read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/00_Merge_SqQCclass_FLcounts/bc02_class_FLNC.txt" , delim = "\t", escape_double = FALSE, trim_ws = TRUE)
 
 ```
 
-## Calculation of log2(TPM+1) as a value of isoform expression
+## Calculation of log2(CPM+1) as a value of isoform expression
 
-normalizing the read counts (TPM calculation) is common and is calculated as follow:
+normalizing the read counts (CPM calculation) is common and is calculated as follow:
 
 > log2((FL_count/total_mapped_reads)\*10e6) +1)
 
-In SquantiQC report, the total_mapped_reads are the total FL_counts in the classification file.
+The total_mapped_reads are the total FL_counts in the collapsed\_\<sample\>.flnc_count.txt or in \<sample\>\_class_FLNC.txt
 
 ``` bash
 # checking by bash what to expect in terms of total FL counts
@@ -50,7 +52,8 @@ cat collapsed_bc02.flnc_count.txt | grep -v "id" | awk -F "," '{sum += $2} END {
 
 ```{r}
 # sum of all FL in the classification file using R:
-bc01_tot_FL_count <- sum(bc01_class$FLNC, na.rm=T) # matches with the bash command results !
+bc01_tot_FL_count <- sum(bc01_class$FLNC, na.rm=T) 
+# matches with the bash command results
 bc02_tot_FL_count <- sum(bc02_class$FLNC, na.rm=T)
 
 # these numbers take into account annotated and novel genes.
