@@ -1,0 +1,99 @@
+---
+title: "Gene Ontology Enrichment Analysis_Kinnex"
+author: "Julia Lienard"
+format: html
+editor: visual
+---
+
+## Background
+
+NOISeq gene expression analysis was performed and a list of top DEGs was extracted ("top100NOISeq_stress_control_DEGs_FLNC.csv"). This list of DEGs is used here to performed gene ontology analysis
+
+## Loading data
+
+```{r}
+library(readr)
+DEGs <- read_csv("../../../analysis/02_Differential_expression_analysis/top100NOISeq_stress_control_DEGs_FLNC.csv")
+```
+
+## Extracting DEGs list for STRESS
+
+```{r}
+library(dplyr)
+StressDEGs <- DEGs %>%
+  dplyr::filter(Sample_DE_up == "stress") %>%
+  dplyr::select(1) %>%
+  dplyr::pull(1)
+```
+
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+# Load list of all expressed genes
+AllExpGenes <- read_csv("../../../analysis/02_Differential_expression_analysis/AllExprGenes.csv")
+
+AllExpGenes <- AllExpGenes %>% pull(associated_gene)
+
+
+ego_Stress <- enrichGO(
+gene = StressDEGs,
+universe = AllExpGenes,
+OrgDb = org.Hs.eg.db,
+keyType = "SYMBOL", # or "ENSEMBL" if using Ensembl ID
+ont = "BP", # "ALL" or "BP", "MF", "CC"
+pAdjustMethod = "BH",
+pvalueCutoff = 0.05,
+qvalueCutoff = 0.2,
+readable = TRUE
+)
+head(ego_Stress)
+
+```
+
+```{r, fig.height = 7, fig.width= 8}
+# Visualization using a barplot
+library(ggplot2)
+plot_ego_Stress <- barplot(ego_Stress, showCategory=10)
+
+plot_ego_Stress + labs(
+  title = " GO term enrichment of top 50 DEGs",
+  subtitle = " Stress sample"
+) +
+  theme_minimal(base_size = 16)
+```
+
+## Extracting DEGs list for Control
+
+```{r}
+ControlDEGs <- DEGs %>%
+  dplyr::filter(Sample_DE_up == "control") %>%
+  dplyr::select(1) %>%
+  dplyr::pull(1)
+```
+
+```{r}
+ego_Control <- enrichGO(
+gene = ControlDEGs,
+universe = AllExpGenes,
+OrgDb = org.Hs.eg.db,
+keyType = "SYMBOL", # or "ENSEMBL" if using Ensembl ID
+ont = "BP", # or "BP", "MF", "CC"
+pAdjustMethod = "BH",
+pvalueCutoff = 0.05,
+qvalueCutoff = 0.2,
+readable = TRUE
+)
+
+head(ego_Control)
+```
+
+```{r, fig.height = 7, fig.width= 8}
+# Visualization using a barplot
+plot_ego_Control <- barplot(ego_Control, showCategory=10)
+
+plot_ego_Control + labs(
+  title = " GO term enrichment of top 50 DEGs",
+  subtitle = " Control sample"
+) +
+  theme_minimal(base_size = 16)
+```

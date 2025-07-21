@@ -1,7 +1,7 @@
 ---
 title: "Plot Transcription divergency (TD) differences"
 author: "Julia Lienard"
-format: pdf
+format: html
 date-modified: last-modified
 editor: visual
 ---

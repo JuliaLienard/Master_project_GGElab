@@ -3,7 +3,7 @@ title: "NOIseq differential expression analysis of pancreatic beta cells RNAseq 
 author: "Julia Lienard"
 date: 2025-02-27
 date-modified: last-modified
-format: pdf
+format: html
 editor: visual
 ---
 
@@ -78,6 +78,11 @@ bc01_bc02_FL_gp_gene <-
                     by = "associated_gene")
 
 # here the number of genes retained (22006) is higher that what was found during TD calculation, but for this latter calculation, the genes not having any of FSM, NIC or NNC isoforms were not kept (total kept 18179).
+
+# Export the list of all expressed genes for future Gene ontology analysis
+AllExprGenes <- bc01_bc02_FL_gp_gene %>% select(associated_gene)
+
+write_csv(AllExprGenes, "../../../analysis/02_Differential_expression_analysis/AllExprGenes.csv")
 ```
 
 ## C - NOISeq Differential expression analysis
@@ -308,7 +313,9 @@ volcano <- ggplot(data = de_genes) +
              linetype = 'dashed' ) +
   labs(title = "Differential expression (DE) of pancreatic cells - NOISeq",
        x = "Log2 Fold-change", y = "DE probability") + 
-  theme(axis.title = element_text(size = 12), axis.text = element_text(size = 12))
+  theme_bw(base_size = 16) +
+  guides(values = guide_legend(override.aes = list(size = 5)))  # Adjust size as needed
+
 volcano
 ```
 
@@ -342,7 +349,7 @@ ggplot(filtered_data, aes(x = associated_gene, y = log2(Expression), fill = Cond
   labs(title = "Expression per Gene",
        x = "", y = "NOISeq expression(log2)") +
   scale_x_discrete(expand = c(0.1, -0.1)) +  # Reduce white space around bars
-  theme_minimal(base_size = 14) +
+  theme_minimal(base_size = 16) +
   theme(legend.position = "top") +
   scale_fill_manual(values = c("Stress" = "darkseagreen3", "Control" = "palevioletred3")) 
 
@@ -639,7 +646,7 @@ ggplot(de_TD_long, aes(x = TD_score, y = log2(NOISeq_expression), color = sample
        axis.title = element_text(size = 12),
        strip.text = element_text(size = 12),
        legend.text = element_text(size = 12),
-       legend.position = "bottom") + 
+       legend.position = "right") + 
   guides(color = guide_legend(override.aes = list(size = 3)))  # Adjust size as needed
 
 
