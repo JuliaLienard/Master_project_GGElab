@@ -80,7 +80,7 @@ bc01_bc02_FL_gp_gene <-
 # here the number of genes retained (22006) is higher that what was found during TD calculation, but for this latter calculation, the genes not having any of FSM, NIC or NNC isoforms were not kept (total kept 18179).
 
 # Export the list of all expressed genes for future Gene ontology analysis
-AllExprGenes <- bc01_bc02_FL_gp_gene %>% select(associated_gene)
+AllExprGenes <- bc01_bc02_FL_gp_gene %>% dplyr::select(associated_gene)
 
 write_csv(AllExprGenes, "../../../analysis/02_Differential_expression_analysis/AllExprGenes.csv")
 ```
@@ -297,7 +297,7 @@ de_genes <- rownames_to_column(de_genes, var = "associated_gene")
 
 #### 5) Volcano plot
 
-```{r}
+```{r, fig.height = 5, fig.width= 5}
 library(ggplot2)
 volcano <- ggplot(data = de_genes) +
   geom_point(mapping = aes(x=M, 
@@ -311,17 +311,19 @@ volcano <- ggplot(data = de_genes) +
   geom_hline(yintercept = 0.9,
              col = 'gray60',
              linetype = 'dashed' ) +
-  labs(title = "Differential expression (DE) of pancreatic cells - NOISeq",
+  labs(title = "Differential expression (DE\nof pancreatic cells",
        x = "Log2 Fold-change", y = "DE probability") + 
   theme_bw(base_size = 16) +
-  guides(values = guide_legend(override.aes = list(size = 5)))  # Adjust size as needed
+  guides(color = guide_legend(override.aes = list(size = 4))) +
+  theme(legend.position ="inside", 
+        legend.justification = c(0.98, 0.25))
 
 volcano
 ```
 
 #### 6) Plot neoantigens
 
-```{r}
+```{r, fig.height = 4, fig.width= 4}
 library(ggplot2)
 library(tidyr)
 library(dplyr)
@@ -619,7 +621,7 @@ de_TD_long <- de_TD_long %>%
   left_join(slopes, by = "facet_group")
 ```
 
-```{r}
+```{r, fig.height = 5, fig.width= 5}
 # Now plot with slope values
 ggplot(de_TD_long, aes(x = TD_score, y = log2(NOISeq_expression), color = sample)) +
   geom_point(size = 0.3) +
@@ -635,7 +637,7 @@ ggplot(de_TD_long, aes(x = TD_score, y = log2(NOISeq_expression), color = sample
   theme_bw() +
   theme(legend.position = "none") +
   labs(title = "Gene expression in relation to TD score",
-       subtitle = "Gene expression calculated and normalized between sample by NOISeq",
+       #subtitle = "Gene expression calculated and normalized between sample by NOISeq",
        color = "Sample",
        y = "NOISeq expression(log2)") +
   geom_text(aes(x = Inf, y = Inf, label = paste("Slope = ", round(estimate, 2))),
@@ -646,7 +648,7 @@ ggplot(de_TD_long, aes(x = TD_score, y = log2(NOISeq_expression), color = sample
        axis.title = element_text(size = 12),
        strip.text = element_text(size = 12),
        legend.text = element_text(size = 12),
-       legend.position = "right") + 
+       legend.position = "bottom") + 
   guides(color = guide_legend(override.aes = list(size = 3)))  # Adjust size as needed
 
 

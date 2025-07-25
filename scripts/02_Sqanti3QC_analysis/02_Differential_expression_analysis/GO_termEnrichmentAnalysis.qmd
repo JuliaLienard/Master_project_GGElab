@@ -50,7 +50,7 @@ head(ego_Stress)
 
 ```
 
-```{r, fig.height = 7, fig.width= 8}
+```{r, fig.height = 5, fig.width= 9}
 # Visualization using a barplot
 library(ggplot2)
 plot_ego_Stress <- barplot(ego_Stress, showCategory=10)
@@ -59,7 +59,22 @@ plot_ego_Stress + labs(
   title = " GO term enrichment of top 50 DEGs",
   subtitle = " Stress sample"
 ) +
-  theme_minimal(base_size = 16)
+  theme_minimal(base_size = 11)
+```
+
+```{r, fig.height = 4, fig.width= 9.5}
+# visualization as a lollipop plot
+ggplot(ego_Stress, showCategory = 10,
+  aes(GeneRatio, forcats::fct_reorder(Description, GeneRatio))) + 
+  geom_segment(aes(xend=0, yend = Description)) +
+  geom_point(aes(color=p.adjust, size = Count)) +
+  scale_color_viridis_c(guide=guide_colorbar(reverse=TRUE)) +
+  scale_size_continuous(range=c(1, 7)) +
+  theme_minimal() + 
+  xlab("Gene Ratio") +
+  ylab(NULL) + 
+  ggtitle("GO Enrichment of up-regulated genes\nStress sample") +
+  theme(axis.text.y = element_text(size = 11)) 
 ```
 
 ## Extracting DEGs list for Control
@@ -87,7 +102,7 @@ readable = TRUE
 head(ego_Control)
 ```
 
-```{r, fig.height = 7, fig.width= 8}
+```{r, fig.height = 5, fig.width= 9}
 # Visualization using a barplot
 plot_ego_Control <- barplot(ego_Control, showCategory=10)
 
@@ -95,5 +110,21 @@ plot_ego_Control + labs(
   title = " GO term enrichment of top 50 DEGs",
   subtitle = " Control sample"
 ) +
-  theme_minimal(base_size = 16)
+  theme_minimal(base_size = 11)
+```
+
+```{r, fig.height = 4, fig.width= 8}
+# visualization as a lollipop plot
+ggplot(ego_Control, showCategory = 10,
+  aes(GeneRatio, forcats::fct_reorder(Description, GeneRatio))) + 
+  geom_segment(aes(xend=0, yend = Description)) +
+  geom_point(aes(color=p.adjust, size = Count)) +
+  scale_color_viridis_c(guide=guide_colorbar(reverse=TRUE)) +
+  scale_size_continuous(range=c(1, 7)) +
+  theme_minimal() + 
+  xlab("Gene Ratio") +
+  ylab(NULL) + 
+  ggtitle("GO Enrichment of up-regulated genes\nControl sample") +
+  theme(axis.text.y = element_text(size = 11)) 
+
 ```
