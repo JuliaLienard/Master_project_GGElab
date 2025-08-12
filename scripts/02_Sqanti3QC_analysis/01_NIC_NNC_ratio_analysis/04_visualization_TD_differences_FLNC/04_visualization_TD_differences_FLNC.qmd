@@ -224,6 +224,68 @@ ggplot(db_RBN_diff_filtered,
   )
 ```
 
+```{r}
+# graph for Ana
+# Create the histogram with centered annotations
+ggplot(db_RBN_diff_filtered, 
+       aes(x = RBN_Difference, fill = Greater_in_bc01)) + 
+  geom_histogram(binwidth = 0.02, color = "black", size = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "white") +
+  scale_fill_manual(name = "",  # Change legend title
+                    values = c("yes" = "#15918A", 
+                               "no" = "#F58A53"), # Define colors
+    labels = c("yes" = "Higher in treated cells", # Rename legend value)
+               "no" = "Higher in control cells"))  +
+  theme_classic() +
+  
+  # Centered text annotations
+  annotate("text", x = mean(range(db_RBN_diff_filtered$RBN_Difference[db_RBN_diff_filtered$RBN_Difference > 0])), 
+           y = annotation_y_diff, 
+           label = paste("T-cell+\n",
+                         count_yes_filt, 
+                         " genes \n(", 
+                         percent_yes_amongDiff, "%)", 
+                         sep = ""), 
+           hjust = 0.5, size = 6, color = "#15918A") + 
+  
+  annotate("text", x = mean(range(db_RBN_diff_filtered$RBN_Difference[db_RBN_diff_filtered$RBN_Difference < 0])),
+           y = annotation_y_diff, 
+           label = paste("Control\n", count_no_filt, " genes \n(", 
+                         percent_no_amongDiff, "%)", sep = ""), 
+           hjust = 0.5, size = 6, color = "#F58A53") +
+  labs(title = "Difference of Transcription divergency\nscore between samples", 
+       y= "Gene counts", x = paste0("Difference of TD score  (", 
+                                    total_genes_diff, " genes)" )) +
+  theme(
+    legend.position = "bottom",  
+    legend.justification = "left",
+    plot.title = element_text(size = 16, 
+                              face = "bold"),
+    axis.title = element_text(size = 14), 
+    axis.text = element_text(size = 13)
+  )
+```
+
+```{r}
+# Filtering to remove genes barely expressed (based on FDM FL counts)
+
+db_RNB_Highdiff_filtered <- db_RBN_diff_filtered %>%
+  filter(sample1_FSM > 5,
+         sample2_FSM > 5)
+
+# recount yes or no after this new filtering
+count_values_Highdiff <- db_RNB_Highdiff_filtered %>%
+  count(Greater_in_bc01) 
+
+write_csv(db_RNB_Highdiff_filtered, "../../../../analysis/01_NIC_NNC_ratio_analysis/04_visualization_TD_differences_FLNC/TD_highTDscore_min5FLNC.csv")
+
+print(count_values_Highdiff)
+```
+
+```{r}
+write_csv(db_RBN_diff_filtered, "../../../../analysis/01_NIC_NNC_ratio_analysis/04_visualization_TD_differences_FLNC/TD_diffTDscore_FLNC.csv")
+```
+
 ## Plotting proportion of genes with TD diff per chromosome
 
 ```{r,fig.width=7, fig.height=8, out.width='100%'}
@@ -332,6 +394,29 @@ ggplot(TD_per_chr_long, aes(x = chr,
   ) +
   scale_x_discrete(limits = c(1:22, "X", "Y"))  # Ensure chromosome order
 
+```
+
+```{r}
+# same graph with Conesa Lab colors
+ggplot(TD_per_chr_long, aes(x = chr, 
+                            y = Percentage, 
+                            group = Condition, color = Condition)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("#F58A53", "#15918A")) +
+  labs(
+    title = "Genes (%) with increased Transcription divergency score",
+    subtitle. = "by Chromosome and sample",
+    x = "Chromosome",
+    y = "Genes (%)",
+    color = ""
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(size = 16, face = "bold")
+  ) +
+  scale_x_discrete(limits = c(1:22, "X", "Y"))
 ```
 
 ## Plotting TD difference per chromosome

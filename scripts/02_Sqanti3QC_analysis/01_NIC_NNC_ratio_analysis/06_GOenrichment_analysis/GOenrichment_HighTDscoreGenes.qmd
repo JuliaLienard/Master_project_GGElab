@@ -1,0 +1,144 @@
+---
+title: "DEA of the top genes with high TD score"
+author: "Julia Lienard"
+format: html
+editor: visual
+---
+
+## Background
+
+The list of genes with TD score (based on NIC and NNC transcripts) differences between the samples was extracted in the quarto document 04_visualization_TD_differences_FLNC.qmd and is used here to analyzed the GO term potential enrichment of the top genes.
+
+## Loading data
+
+```{r}
+library(readr)
+HighTD_genes <- read_csv("../../../../analysis/01_NIC_NNC_ratio_analysis/04_visualization_TD_differences_FLNC/TD_highTDscore_min5FLNC.csv")
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+```
+
+## Load list of all expressed genes
+
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+# Load list of all expressed genes
+AllExpGenes <- read_delim("../../../../analysis/01_NIC_NNC_ratio_analysis/02_Common_genes_classificationSQ_noRound_FLNC/02_output/bc01bc02common_genes_RBN_diff_FLNC.txt", delim = "\t")
+
+AllExpGenes <- AllExpGenes %>%
+  tidyr::drop_na() %>% 
+  dplyr::pull(associated_gene) # n = 18179
+```
+
+## Extract 10% of top genes with different TD score
+
+```{r}
+# STRESS SAMPLE
+top_Stress <- HighTD_genes %>%
+  filter(Greater_in_bc01 == "yes") %>%
+  tidyr::drop_na() 
+
+TOT_Stress <- as.numeric(nrow(top_Stress))
+
+top_Stress <- top_Stress %>%
+  slice_max(order_by = RBN_Difference, n = round(TOT_Stress * 0.1)) # take 10% of top genes with TD score difference (higher in Stress
+
+top_Stress_list <- top_Stress %>% pull(associated_gene)
+
+# CONTROL sample
+top_Control <- HighTD_genes %>%
+  filter(Greater_in_bc01 == "no") %>%
+  tidyr::drop_na() 
+
+TOT_control <- as.numeric(nrow(top_Control))
+
+top_Control <- top_Control %>% 
+  slice_min(order_by = RBN_Difference, n = round(TOT_control * 0.1))
+
+top_Control_list <- top_Control %>% pull(associated_gene)
+```
+
+## Perform GO enrichment analysis
+
+### Stress sample
+
+```{r}
+ego_top_Stress <- enrichGO(
+gene = top_Stress_list,
+universe = AllExpGenes,
+OrgDb = org.Hs.eg.db,
+keyType = "SYMBOL", # or "ENSEMBL" if using Ensembl ID
+ont = "BP", # "ALL" or "BP", "MF", "CC"
+pAdjustMethod = "BH",
+pvalueCutoff = 0.05,
+qvalueCutoff = 0.2,
+readable = TRUE
+)
+head(ego_top_Stress)
+```
+
+```{r}
+library(ggplot2)
+plot_ego_top_Stress <- dotplot(ego_top_Stress) + 
+  labs(title = "Stress Sample")
+plot_ego_top_Stress 
+```
+
+### Control sample
+
+```{r}
+ego_top_Control <- enrichGO(
+gene = top_Control_list,
+universe = AllExpGenes,
+OrgDb = org.Hs.eg.db,
+keyType = "SYMBOL", # or "ENSEMBL" if using Ensembl ID
+ont = "BP", # "ALL" or "BP", "MF", "CC"
+pAdjustMethod = "BH",
+pvalueCutoff = 0.05,
+qvalueCutoff = 0.2,
+readable = TRUE
+)
+head(ego_top_Control)
+```
+
+## Extract 10% of all genes with highest TD scores
+
+```{r}
+TOT_genes <- as.numeric(nrow(HighTD_genes))
+
+all_top10genes <- HighTD_genes %>%
+  slice_max(order_by = abs(RBN_Difference), n = round(TOT_genes * 0.1)) %>% pull(associated_gene)
+
+
+ego_top10genes <- enrichGO(
+gene = all_top10genes,
+universe = AllExpGenes,
+OrgDb = org.Hs.eg.db,
+keyType = "SYMBOL", # or "ENSEMBL" if using Ensembl ID
+ont = "BP", # "ALL" or "BP", "MF", "CC"
+pAdjustMethod = "BH",
+pvalueCutoff = 0.05,
+qvalueCutoff = 0.2,
+readable = TRUE
+)
+head(ego_top10genes) # we get the same enrichment as for the Stress sample alone.
+```
+
+```{r}
+library(viridisLite)
+
+plot_ego_top10genes <- dotplot(ego_top10genes) + viridis::scale_fill_viridis() + 
+  labs(title = "Both samples")
+plot_ego_top10genes 
+```
+
+```{r, width = 5}
+library(patchwork)
+
+plot_ego_top_Stress / plot_ego_top10genes
+```

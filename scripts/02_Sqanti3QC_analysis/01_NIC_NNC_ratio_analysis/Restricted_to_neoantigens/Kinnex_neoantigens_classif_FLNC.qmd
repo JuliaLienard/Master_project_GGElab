@@ -938,6 +938,36 @@ TD_neo_filt <- ggplot(filter(all_neoantigen_class_gp_gene_FL_wide,
 TD_neo_filt
 ```
 
+```{r, width = 4, height = 4}
+# same last graph with ConesaLab colors
+# plotting RBN for 3 selected genes
+TD_neo_filt_LabCol <- ggplot(filter(all_neoantigen_class_gp_gene_FL_wide,
+                             associated_gene %in% c("INS", "CHGA", "GAD2"))) +
+  geom_col(mapping = aes(x = sample, 
+                         y = TD, 
+                         fill = sample)) + 
+  facet_wrap(~associated_gene, 
+             scales = "free_y") +
+  scale_fill_manual(values = c("bc01" = "#15918A", 
+                               "bc02" = "#F58A53")) +
+  scale_x_discrete(labels = c("bc01" = "T-cell+", 
+                              "bc02" = "Control")) +
+  labs(title = "TD score for major neoantigen-encoding genes", 
+       x = "Pancreatic β-cell samples", 
+       y = "TD score") + 
+  theme_classic() +
+  theme(legend.position = "none",
+    legend.title = element_text(size = 16),
+    legend.text = element_text(size = 16),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    axis.title = element_text(size = 16),
+    plot.title = element_text(size = 22, face = "bold"),
+    strip.text = element_text(size = 14))
+             
+TD_neo_filt_LabCol
+```
+
 ### 5) FSM subcategories
 
 ```{r}
