@@ -63,6 +63,23 @@ top_Control <- top_Control %>%
 top_Control_list <- top_Control %>% pull(associated_gene)
 ```
 
+```{r}
+# Extraction top 10 genes with highest score for supplementary figure thesis
+top_10Stress <- top_Stress %>%
+  slice_max(order_by = RBN_Difference, n = 10) %>%
+  dplyr::select(associated_gene,RBN_Difference)
+
+top_10Control <- top_Control %>% 
+  slice_min(order_by = RBN_Difference, n = 10) %>%
+  dplyr::select(associated_gene,RBN_Difference)
+
+# export
+
+write.csv(top_10Control, "../../../../analysis/01_NIC_NNC_ratio_analysis/03_NIC_NNC_ratio_using_R_FLNC/top10_highTD_control.csv")
+
+write.csv(top_10Stress, "../../../../analysis/01_NIC_NNC_ratio_analysis/03_NIC_NNC_ratio_using_R_FLNC/top10_highTD_stress.csv")
+```
+
 ## Perform GO enrichment analysis
 
 ### Stress sample
