@@ -361,15 +361,16 @@ library(tidyr)
 
 # Convert data to long format for plotting
 TD_per_chr_long <- TD_per_chr %>%
-  select(chr, perc_TDhigherStress, perc_TDhigherControl) %>%
+  select(chr, perc_TDhigherStress, perc_TDhigherControl,diff_perc) %>%
   pivot_longer(
-    cols = c(perc_TDhigherStress, perc_TDhigherControl),
+    cols = c(perc_TDhigherStress, perc_TDhigherControl, diff_perc),
     names_to = "Condition",
     values_to = "Percentage"
   ) %>%
   mutate(Condition = case_when(
     Condition == "perc_TDhigherStress" ~ "Gene(%) with higher TD in Stress",
-    Condition == "perc_TDhigherControl" ~ "Gene(%) with higher TD in Control"
+    Condition == "perc_TDhigherControl" ~ "Gene(%) with higher TD in Control",
+    Condition == "diff_perc"  ~ "Difference of proportions"
   ))
 
 # Create the line plot
@@ -378,7 +379,7 @@ ggplot(TD_per_chr_long, aes(x = chr,
                             group = Condition, color = Condition)) +
   geom_line(linewidth = 1) +
   geom_point(size = 3) +
-  scale_color_manual(values = c("palevioletred3", "darkseagreen3")) +
+  scale_color_manual(values = c("darkgrey","palevioletred3", "darkseagreen3")) +
   labs(
     title = "Genes (%) with increased Transcription divergency score",
     subtitle. = "by Chromosome and sample",
@@ -403,7 +404,7 @@ ggplot(TD_per_chr_long, aes(x = chr,
                             group = Condition, color = Condition)) +
   geom_line(linewidth = 1) +
   geom_point(size = 3) +
-  scale_color_manual(values = c("#F58A53", "#15918A")) +
+  scale_color_manual(values = c("darkgrey","#F58A53", "#15918A")) +
   labs(
     title = "Genes (%) with increased Transcription divergency score",
     subtitle. = "by Chromosome and sample",
