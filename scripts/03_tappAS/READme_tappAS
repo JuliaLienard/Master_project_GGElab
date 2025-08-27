@@ -10,7 +10,7 @@ Summary of the steps:
 5) Subsetting the data as tappAS does not handle large data set : 
     - 
     - Filter_Highly_Express_transcripts_FLNC.qmd
-    -  RefineFilter_tappASgff3_tamaTransReport.py
+    - RefineFilter_tappASgff3_tamaTransReport.py
 6) using the filtered Tama merge "bc01_bc02_isocollapseTamamerged_trans_report.txt" file and the sqantiQC collapsed_XXX.abundance.tsv files, building of the transcript expression matrix with the developed script "transcript_expression_matrix_replicates.py"
 7) Analysis using tappAS
 
