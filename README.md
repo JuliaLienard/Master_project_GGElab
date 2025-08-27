@@ -10,3 +10,10 @@ Activated T cell stimulation of pancreatic cells during 72 hours (stress conditi
 After these three days of stimulation, pancreatic β cells are collected and RNA extraction is performed.
 
 The two RNA samples (Control and Stress) were pooled and sequenced on a Pacific Biosciences (PacBio) Revio, using the full-length RNA workflow on 1 SMRT Cell 25M. 
+
+Aim of the project:
+
+- transcriptome reconstruction and isoform structural category analysis
+- Explore Transcript divergency using
+  * Novel transcripts categories NNC and NIC
+  * Incomplete transcript category ISM and TUSCO genes
